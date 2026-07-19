@@ -1,3 +1,5 @@
+Cloning into '/tmp/activitylauncher-v8-verify-admin'...
+122431 /tmp/activitylauncher-v8.patch
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index 68a54b7..c13a919 100644
 --- a/app/build.gradle.kts
@@ -34,8 +36,22 @@ index 68a54b7..c13a919 100644
  
      val roomVersion = "2.6.1"
      implementation("androidx.room:room-runtime:$roomVersion")
+diff --git a/app/src/ads/res/xml/preferences.xml b/app/src/ads/res/xml/preferences.xml
+index 524271d..c9dfaab 100644
+--- a/app/src/ads/res/xml/preferences.xml
++++ b/app/src/ads/res/xml/preferences.xml
+@@ -53,5 +53,9 @@
+             android:entryValues="@array/locales"
+             android:key="language"
+             android:title="@string/settings_language" />
++        <Preference
++            android:key="device_admin"
++            android:summary="@string/settings_summary_device_admin"
++            android:title="@string/settings_device_admin" />
+     </PreferenceCategory>
+ </PreferenceScreen>
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index b1e2f6a..239f2bb 100644
+index b1e2f6a..4486462 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -2,10 +2,17 @@
@@ -68,7 +84,7 @@ index b1e2f6a..239f2bb 100644
      <uses-feature
          android:name="android.software.leanback"
          android:required="false" />
-@@ -115,6 +127,25 @@
+@@ -115,6 +127,40 @@
              android:label="@string/activity_settings"
              android:theme="@style/Theme.ActivityLauncher.NoActionBar" />
  
@@ -83,6 +99,21 @@ index b1e2f6a..239f2bb 100644
 +            android:exported="false"
 +            android:stopWithTask="true" />
 +
++        <receiver
++            android:name=".entrypoint.ActivityLauncherDeviceAdminReceiver"
++            android:description="@string/device_admin_description"
++            android:exported="true"
++            android:label="@string/app_name"
++            android:permission="android.permission.BIND_DEVICE_ADMIN">
++            <meta-data
++                android:name="android.app.device_admin"
++                android:resource="@xml/device_admin" />
++            <intent-filter>
++                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
++                <action android:name="android.app.action.DEVICE_ADMIN_DISABLED" />
++            </intent-filter>
++        </receiver>
++
 +        <provider
 +            android:name="rikka.shizuku.ShizukuProvider"
 +            android:authorities="${applicationId}.shizuku"
@@ -94,7 +125,7 @@ index b1e2f6a..239f2bb 100644
          <activity
              android:name=".entrypoint.QSTileNavHostActivity"
              android:exported="false"
-@@ -132,7 +163,7 @@
+@@ -132,7 +178,7 @@
  
          <receiver
              android:name=".entrypoint.PackageChangeReceiver"
@@ -170,7 +201,7 @@ index 8029aa9..03cdd94 100644
 +    }
  }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/database/AppDatabase.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/database/AppDatabase.kt
-index 79b60a9..86fdbf6 100644
+index 79b60a9..daecc11 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/data/database/AppDatabase.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/database/AppDatabase.kt
 @@ -48,6 +48,48 @@ abstract class PackageDao {
@@ -201,10 +232,10 @@ index 79b60a9..86fdbf6 100644
 +        backend: String,
 +        success: Boolean,
 +        message: String?,
-+    ) {
++    ): Long {
 +        val now = System.currentTimeMillis()
 +        val previous = get(packageName, className, backend)
-+        upsert(
++        return upsert(
 +            LaunchMethodHistoryEntity(
 +                packageName = packageName,
 +                className = className,
@@ -665,6 +696,47 @@ index 7b6daa8..8395a6b 100644
      fun shareActivity() {
          val info = getEditedActivityInfo()
          shareActivityUseCase(info.componentName)
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt
+index 36e7d3c..18534ca 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt
+@@ -1,5 +1,7 @@
+ package de.szalkowski.activitylauncher.presentation.settings
+ 
++import android.app.admin.DevicePolicyManager
++import android.content.ComponentName
+ import android.content.Intent
+ import android.content.SharedPreferences
+ import android.os.Bundle
+@@ -12,6 +14,7 @@ import de.szalkowski.activitylauncher.R
+ import de.szalkowski.activitylauncher.domain.packages.PackageRepository
+ import de.szalkowski.activitylauncher.domain.settings.SettingsRepository
+ import de.szalkowski.activitylauncher.entrypoint.MainActivity
++import de.szalkowski.activitylauncher.entrypoint.ActivityLauncherDeviceAdminReceiver
+ import javax.inject.Inject
+ 
+ @AndroidEntryPoint
+@@ -52,6 +55,20 @@ class SettingsFragment : PreferenceFragmentCompat() {
+         val hidePrivate: SwitchPreferenceCompat = findPreference("hide_private")!!
+         val theme: ListPreference = findPreference("theme")!!
+         val languages: ListPreference = findPreference("language")!!
++        val deviceAdmin = findPreference<androidx.preference.Preference>("device_admin")!!
++
++        deviceAdmin.setOnPreferenceClickListener {
++            val component = ComponentName(requireContext(), ActivityLauncherDeviceAdminReceiver::class.java)
++            startActivity(
++                Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
++                    .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, component)
++                    .putExtra(
++                        DevicePolicyManager.EXTRA_ADD_EXPLANATION,
++                        getString(R.string.device_admin_explanation),
++                    ),
++            )
++            true
++        }
+ 
+         languages.setSummaryProvider(ListPreference.SimpleSummaryProvider.getInstance())
+         populateLanguages(languages)
 diff --git a/app/src/main/res/layout/fragment_activity_details.xml b/app/src/main/res/layout/fragment_activity_details.xml
 index ba56747..5a624ba 100644
 --- a/app/src/main/res/layout/fragment_activity_details.xml
@@ -763,7 +835,7 @@ index 508ab02..2879033 100644
 +        app:showAsAction="never" />
  </menu>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 4893048..ebe850e 100644
+index 4893048..2515b70 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -11,6 +11,25 @@
@@ -802,7 +874,18 @@ index 4893048..ebe850e 100644
      <string name="error_verbose_pin_shortcut" comment="Error message when the device launcher does not support pinning shortcuts">Current launcher does not support "PinShortcut". Unable to create shortcut.</string>
      <string name="exception_invalid_component_name" comment="Error message for dangerous or invalid component names. %s is the problematic component">Invalid or potentially harmful component name: %s</string>
      <string name="filter_hint" comment="Hint text in the filter search input field">package/action</string>
-@@ -56,4 +78,12 @@
+@@ -43,6 +65,10 @@
+     <string name="settings_summary_hide_private" comment="Description explaining the hide private activities setting">Hide private (unexported and disabled) activities</string>
+     <string name="settings_summary_pro_version" comment="Description for the Pro version setting">Want to support the app and remove ads? Get Activity Launcher Pro on Google Play — it helps fund development and is fully open-source.</string>
+     <string name="settings_summary_support_discord">Join our Discord server for support, feature requests, and community discussions.</string>
++    <string name="settings_device_admin">Device administrator</string>
++    <string name="settings_summary_device_admin">Open Android settings to enable or disable Activity Launcher as a device administrator.</string>
++    <string name="device_admin_description">Optional administrator entry point for explicit, user-approved device management features.</string>
++    <string name="device_admin_explanation">Enable only if you intentionally want to test the standard device administrator integration.</string>
+     <string name="settings_support_discord">Support and Feature Requests</string>
+     <string name="settings_theme" comment="Settings option for app theme selection">Theme</string>
+     <string name="short_description" comment="Short description shown in app store listings (Play Store, F-Droid)">Launches hidden activities and creates shortcuts for installed apps</string>
+@@ -56,4 +82,12 @@
      <string name="title_dialog_support" comment="Dialog title for the support/donate dialog">Thanks for using Activity Launcher</string>
      <string name="title_fragment_activity_list" comment="Screen title showing activities within a selected package">Activities</string>
      <string name="title_fragment_package_list" comment="Screen title for the list of installed packages/apps">Installed packages</string>
@@ -815,6 +898,21 @@ index 4893048..ebe850e 100644
 +    <string name="audit_failed">Audit failed: %s</string>
 +    <string name="audit_copied">Report copied</string>
  </resources>
+diff --git a/app/src/noads/res/xml/preferences.xml b/app/src/noads/res/xml/preferences.xml
+index e5dad8b..a38a285 100644
+--- a/app/src/noads/res/xml/preferences.xml
++++ b/app/src/noads/res/xml/preferences.xml
+@@ -21,6 +21,10 @@
+             android:entryValues="@array/locales"
+             android:key="language"
+             android:title="@string/settings_language" />
++        <Preference
++            android:key="device_admin"
++            android:summary="@string/settings_summary_device_admin"
++            android:title="@string/settings_device_admin" />
+     </PreferenceCategory>
+ 
+     <PreferenceCategory
 diff --git a/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt
 index 560ee48..afa8d1b 100644
 --- a/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt
@@ -2128,6 +2226,22 @@ index 0000000..3f0e920
 +        const val EXTRA_BACKEND = "activitylauncher.extra.SERVICE_BACKEND"
 +    }
 +}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/ActivityLauncherDeviceAdminReceiver.kt b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/ActivityLauncherDeviceAdminReceiver.kt
+new file mode 100644
+index 0000000..d78c9e1
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/ActivityLauncherDeviceAdminReceiver.kt
+@@ -0,0 +1,10 @@
++package de.szalkowski.activitylauncher.entrypoint
++
++import android.app.admin.DeviceAdminReceiver
++
++/**
++ * Standard, user-consented device administrator entry point.
++ *
++ * It does not provision device-owner mode or perform privileged actions by itself.
++ */
++class ActivityLauncherDeviceAdminReceiver : DeviceAdminReceiver()
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/AuditActivity.kt b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/AuditActivity.kt
 new file mode 100644
 index 0000000..c519b02
@@ -2478,6 +2592,16 @@ index 0000000..bae41bc
 +<resources>
 +    <bool name="shizuku_provider_enabled">false</bool>
 +</resources>
+diff --git a/app/src/main/res/xml/device_admin.xml b/app/src/main/res/xml/device_admin.xml
+new file mode 100644
+index 0000000..8b4c99b
+--- /dev/null
++++ b/app/src/main/res/xml/device_admin.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
++    <uses-policies />
++</device-admin>
 diff --git a/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt
 new file mode 100644
 index 0000000..9385a55

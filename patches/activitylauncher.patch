@@ -1266,14 +1266,14 @@ index 0000000..9e7d274
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuPackageStateExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuPackageStateExecutor.kt
 new file mode 100644
-index 0000000..353a29b
+index 0000000..e46dc3e
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuPackageStateExecutor.kt
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,56 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.ComponentName
-+import android.os.UserHandle
++import android.os.Process
 +import de.szalkowski.activitylauncher.core.util.PackageStateCommandBuilder
 +import javax.inject.Inject
 +
@@ -1289,7 +1289,7 @@ index 0000000..353a29b
 +    fun setApplicationEnabled(
 +        packageName: String,
 +        enabled: Boolean,
-+        userId: Int = UserHandle.myUserId(),
++        userId: Int = currentUserId(),
 +    ): PackageStateChangeResult = runCatching {
 +        execute(PackageStateCommandBuilder.buildApplicationCommand(packageName, enabled, userId))
 +    }.getOrElse(::failure)
@@ -1297,7 +1297,7 @@ index 0000000..353a29b
 +    fun setActivityEnabled(
 +        componentName: ComponentName,
 +        enabled: Boolean,
-+        userId: Int = UserHandle.myUserId(),
++        userId: Int = currentUserId(),
 +    ): PackageStateChangeResult = runCatching {
 +        execute(PackageStateCommandBuilder.buildActivityCommand(componentName, enabled, userId))
 +    }.getOrElse(::failure)
@@ -1319,6 +1319,12 @@ index 0000000..353a29b
 +        success = false,
 +        message = error.message ?: error::class.java.simpleName,
 +    )
++
++    private fun currentUserId(): Int = Process.myUid() / PER_USER_RANGE
++
++    companion object {
++        private const val PER_USER_RANGE = 100_000
++    }
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt
 new file mode 100644

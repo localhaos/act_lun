@@ -1,5 +1,5 @@
-Cloning into '/tmp/activitylauncher-v8-verify-admin3'...
-122533 /tmp/activitylauncher-v8.patch
+Cloning into '/tmp/activitylauncher-v8-verify-safe'...
+151251 /tmp/activitylauncher-v8.patch
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index 68a54b7..c13a919 100644
 --- a/app/build.gradle.kts
@@ -50,8 +50,48 @@ index 524271d..c9dfaab 100644
 +            android:title="@string/settings_device_admin" />
      </PreferenceCategory>
  </PreferenceScreen>
+diff --git a/app/src/androidTest/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImplTest.kt b/app/src/androidTest/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImplTest.kt
+index d3254bc..11b8f32 100644
+--- a/app/src/androidTest/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImplTest.kt
++++ b/app/src/androidTest/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImplTest.kt
+@@ -3,6 +3,7 @@ package de.szalkowski.activitylauncher.data.launcher
+ import android.content.ComponentName
+ import android.content.Intent
+ import android.net.Uri
++import androidx.test.core.app.ApplicationProvider
+ import androidx.test.ext.junit.runners.AndroidJUnit4
+ import de.szalkowski.activitylauncher.domain.launcher.ShortcutCreator
+ import de.szalkowski.activitylauncher.domain.usecase.launcher.GetActivityIconUseCase
+@@ -20,7 +21,10 @@ class ViewIntentParserImplTest {
+ 
+     @Before
+     fun setup() {
+-        parser = ViewIntentParserImpl(getActivityIconUseCase)
++        parser = ViewIntentParserImpl(
++            getActivityIconUseCase,
++            ApplicationProvider.getApplicationContext(),
++        )
+     }
+ 
+     @Test
+diff --git a/app/src/androidTest/java/de/szalkowski/activitylauncher/entrypoint/MainActivityIntentTest.kt b/app/src/androidTest/java/de/szalkowski/activitylauncher/entrypoint/MainActivityIntentTest.kt
+index 9e93317..b04457a 100644
+--- a/app/src/androidTest/java/de/szalkowski/activitylauncher/entrypoint/MainActivityIntentTest.kt
++++ b/app/src/androidTest/java/de/szalkowski/activitylauncher/entrypoint/MainActivityIntentTest.kt
+@@ -91,7 +91,10 @@ class MainActivityIntentTest {
+     @Before
+     fun init() {
+         hiltRule.inject()
+-        val realParser = ViewIntentParserImpl(getActivityIconUseCase)
++        val realParser = ViewIntentParserImpl(
++            getActivityIconUseCase,
++            ApplicationProvider.getApplicationContext(),
++        )
+         whenever(viewIntentParser.parseLaunchRequest(any())).thenAnswer { invocation: org.mockito.invocation.InvocationOnMock -> realParser.parseLaunchRequest(invocation.getArgument(0)) }
+         whenever(viewIntentParser.parseShortcutRequest(any())).thenAnswer { invocation: org.mockito.invocation.InvocationOnMock -> realParser.parseShortcutRequest(invocation.getArgument(0)) }
+         whenever(viewIntentParser.componentNameFromIntent(any())).thenAnswer { invocation: org.mockito.invocation.InvocationOnMock -> realParser.componentNameFromIntent(invocation.getArgument(0)) }
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index b1e2f6a..4486462 100644
+index b1e2f6a..9f87e78 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -2,10 +2,17 @@
@@ -72,7 +112,14 @@ index b1e2f6a..4486462 100644
  
      <permission
          android:name="de.szalkowski.activitylauncher.permission.CREATE_SHORTCUT"
-@@ -17,6 +24,11 @@
+@@ -13,10 +20,18 @@
+     <permission
+         android:name="de.szalkowski.activitylauncher.permission.LAUNCH_ACTIVITY"
+         android:protectionLevel="signature" />
++    <permission
++        android:name="de.szalkowski.activitylauncher.permission.SIGNED_PLUGIN"
++        android:protectionLevel="signature" />
+ 
      <uses-permission android:name="de.szalkowski.activitylauncher.permission.CREATE_SHORTCUT" />
      <uses-permission android:name="de.szalkowski.activitylauncher.permission.LAUNCH_ACTIVITY" />
  
@@ -84,7 +131,7 @@ index b1e2f6a..4486462 100644
      <uses-feature
          android:name="android.software.leanback"
          android:required="false" />
-@@ -115,6 +127,40 @@
+@@ -115,6 +130,40 @@
              android:label="@string/activity_settings"
              android:theme="@style/Theme.ActivityLauncher.NoActionBar" />
  
@@ -125,7 +172,7 @@ index b1e2f6a..4486462 100644
          <activity
              android:name=".entrypoint.QSTileNavHostActivity"
              android:exported="false"
-@@ -132,7 +178,7 @@
+@@ -132,7 +181,7 @@
  
          <receiver
              android:name=".entrypoint.PackageChangeReceiver"
@@ -347,6 +394,188 @@ index b7592b7..082d05e 100644
 +        }
 +    }
  }
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherProxyImpl.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherProxyImpl.kt
+index cdcb087..1dcf125 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherProxyImpl.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherProxyImpl.kt
+@@ -8,6 +8,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
+ import de.szalkowski.activitylauncher.core.util.toIconCompat
+ import de.szalkowski.activitylauncher.domain.launcher.ActivityLauncherProxy
+ import de.szalkowski.activitylauncher.domain.launcher.ShortcutCreator
++import de.szalkowski.activitylauncher.domain.launcher.SignedPluginContract
+ import de.szalkowski.activitylauncher.domain.model.LaunchRequest
+ import de.szalkowski.activitylauncher.domain.model.PluginInfo
+ import javax.inject.Inject
+@@ -18,12 +19,20 @@ class ActivityLauncherProxyImpl @Inject constructor(
+     private val pm: PackageManager = context.packageManager
+ 
+     override fun launchActivity(request: LaunchRequest) {
+-        val intent = Intent(ActivityLauncherProxy.INTENT_LAUNCH_ACTIVITY)
+-        if (request.launcherPlugin != null) {
+-            intent.component = request.launcherPlugin
++        val plugin = request.launcherPlugin
++        val signedPlugin = plugin != null && isSignedPlugin(plugin)
++        val intent = Intent(
++            if (signedPlugin) SignedPluginContract.ACTION_LAUNCH
++            else ActivityLauncherProxy.INTENT_LAUNCH_ACTIVITY,
++        )
++        if (plugin != null) {
++            intent.component = plugin
+         }
+ 
+         intent.putExtra(ShortcutCreator.INTENT_EXTRA_INTENT, request.intent.toUri(Intent.URI_INTENT_SCHEME))
++        if (signedPlugin) {
++            intent.putExtra(SignedPluginContract.EXTRA_API_VERSION, SignedPluginContract.API_VERSION)
++        }
+         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+ 
+         context.startActivity(intent)
+@@ -36,13 +45,33 @@ class ActivityLauncherProxyImpl @Inject constructor(
+     }
+ 
+     override fun getPlugins(): List<PluginInfo> {
+-        val intent = Intent(ActivityLauncherProxy.INTENT_LAUNCH_ACTIVITY)
+-        val handlers = pm.queryIntentActivities(intent, 0)
+-        return handlers.map { handler ->
++        val legacy = queryPlugins(ActivityLauncherProxy.INTENT_LAUNCH_ACTIVITY, false)
++        val signed = queryPlugins(SignedPluginContract.ACTION_LAUNCH, true)
++        return (legacy + signed).distinctBy { it.componentName }
++    }
++
++    private fun queryPlugins(action: String, signedApi: Boolean): List<PluginInfo> {
++        val handlers = pm.queryIntentActivities(Intent(action), 0)
++        return handlers.filter { handler ->
++            !signedApi || (
++                handler.activityInfo.permission == SignedPluginContract.PERMISSION &&
++                    pm.checkPermission(SignedPluginContract.PERMISSION, handler.activityInfo.packageName) ==
++                    PackageManager.PERMISSION_GRANTED
++                )
++        }.map { handler ->
+             val name = handler.loadLabel(pm).toString()
+             val componentName = ComponentName(handler.activityInfo.packageName, handler.activityInfo.name)
+             val icon = handler.loadIcon(pm).toIconCompat()
+-            PluginInfo(name, componentName, icon)
++            PluginInfo(name, componentName, icon, signedApi)
+         }
+     }
++
++    private fun isSignedPlugin(component: ComponentName): Boolean {
++        return runCatching {
++            val info = pm.getActivityInfo(component, 0)
++            info.permission == SignedPluginContract.PERMISSION &&
++                pm.checkPermission(SignedPluginContract.PERMISSION, component.packageName) ==
++                PackageManager.PERMISSION_GRANTED
++        }.getOrDefault(false)
++    }
+ }
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImpl.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImpl.kt
+index 180b7e6..0c6e207 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImpl.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImpl.kt
+@@ -1,7 +1,10 @@
+ package de.szalkowski.activitylauncher.data.launcher
+ 
+ import android.content.ComponentName
++import android.content.Context
+ import android.content.Intent
++import android.net.Uri
++import dagger.hilt.android.qualifiers.ApplicationContext
+ import androidx.core.graphics.drawable.IconCompat
+ import de.szalkowski.activitylauncher.domain.launcher.ShortcutCreator
+ import de.szalkowski.activitylauncher.domain.launcher.ViewIntentParser
+@@ -12,6 +15,7 @@ import javax.inject.Inject
+ 
+ class ViewIntentParserImpl @Inject constructor(
+     private val getActivityIconUseCase: GetActivityIconUseCase,
++    @ApplicationContext private val context: Context,
+ ) : ViewIntentParser {
+     override fun parseLaunchRequest(intent: Intent): LaunchRequest? {
+         val launchIntentStr = intent.getStringExtra(ShortcutCreator.INTENT_EXTRA_INTENT)
+@@ -53,6 +57,9 @@ class ViewIntentParserImpl @Inject constructor(
+     override fun componentNameFromIntent(intent: Intent): ComponentName? {
+         return when (intent.action) {
+             Intent.ACTION_VIEW -> {
++                if (intent.data?.scheme == ContentUriIntentReader.SCHEME) {
++                    return intent.data?.let { parseContentUriIntent(it) }?.component
++                }
+                 runCatching {
+                     val url = intent.dataString.orEmpty()
+                     val rawComponent = url.removePrefix("https://activitylauncher.net/activity/")
+@@ -74,6 +81,10 @@ class ViewIntentParserImpl @Inject constructor(
+         }
+     }
+ 
++    override fun parseContentUriIntent(uri: Uri): Intent? {
++        return ContentUriIntentReader(context).read(uri)
++    }
++
+     override fun parseShortcutIntent(uri: String): Intent? {
+         val intent = try {
+             Intent.parseUri(uri, Intent.URI_INTENT_SCHEME)
+@@ -92,3 +103,45 @@ class ViewIntentParserImpl @Inject constructor(
+         }
+     }
+ }
++
++private class ContentUriIntentReader(private val context: Context) {
++    fun read(uri: Uri): Intent? {
++        if (uri.scheme != SCHEME || uri.authority.isNullOrBlank() || uri.authority!!.contains('@')) return null
++        val type = context.contentResolver.getType(uri)
++        if (type != null && type !in ALLOWED_TYPES) return null
++        return runCatching {
++            val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
++                val output = java.io.ByteArrayOutputStream()
++                val buffer = ByteArray(4096)
++                while (output.size() <= MAX_BYTES) {
++                    val count = input.read(buffer)
++                    if (count < 0) break
++                    output.write(buffer, 0, count)
++                }
++                output.toByteArray()
++            } ?: return null
++            if (bytes.size > MAX_BYTES) return null
++            parseText(bytes.toString(Charsets.UTF_8))
++        }.getOrNull()
++    }
++
++    companion object {
++        const val SCHEME = "content"
++        private const val MAX_BYTES = 64 * 1024
++        private val ALLOWED_TYPES = setOf(
++            "text/plain",
++            "text/uri-list",
++            "application/json",
++            "application/vnd.android.intent",
++        )
++
++        fun parseText(value: String): Intent? {
++            val candidate = value.trim()
++            if (candidate.isEmpty() || candidate.any { it == '\u0000' }) return null
++            val intent = runCatching {
++                Intent.parseUri(candidate, Intent.URI_INTENT_SCHEME)
++            }.getOrNull() ?: return null
++            return intent.takeIf { it.component != null }
++        }
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/ViewIntentParser.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/ViewIntentParser.kt
+index 447633e..5ea9dfd 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/ViewIntentParser.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/ViewIntentParser.kt
+@@ -2,6 +2,7 @@ package de.szalkowski.activitylauncher.domain.launcher
+ 
+ import android.content.ComponentName
+ import android.content.Intent
++import android.net.Uri
+ import de.szalkowski.activitylauncher.domain.model.LaunchRequest
+ import de.szalkowski.activitylauncher.domain.model.ShortcutRequest
+ 
+@@ -10,4 +11,5 @@ interface ViewIntentParser {
+     fun parseShortcutIntent(uri: String): Intent?
+     fun parseLaunchRequest(intent: Intent): LaunchRequest?
+     fun parseShortcutRequest(intent: Intent): ShortcutRequest?
++    fun parseContentUriIntent(uri: Uri): Intent?
+ }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/LaunchRequest.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/LaunchRequest.kt
 index 001ec2d..76571ab 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/LaunchRequest.kt
@@ -357,6 +586,31 @@ index 001ec2d..76571ab 100644
      val launcherPlugin: ComponentName? = null,
 +    val backend: ActivityLaunchBackend = ActivityLaunchBackend.DEFAULT,
  )
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/PluginInfo.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/PluginInfo.kt
+index 4def304..674fba3 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/PluginInfo.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/PluginInfo.kt
+@@ -10,17 +10,20 @@ data class PluginInfo(
+     val name: String,
+     val componentName: ComponentName,
+     val icon: IconCompat? = null,
++    val signedApi: Boolean = false,
+ ) : Parcelable {
+     constructor(parcel: Parcel) : this(
+         parcel.readString()!!,
+         parcel.readParcelable(ComponentName::class.java.classLoader)!!,
+         parcel.readBundle(Bundle::class.java.classLoader)?.let { IconCompat.createFromBundle(it) },
++        parcel.readByte() != 0.toByte(),
+     )
+ 
+     override fun writeToParcel(parcel: Parcel, flags: Int) {
+         parcel.writeString(name)
+         parcel.writeParcelable(componentName, flags)
+         parcel.writeBundle(icon?.toBundle())
++        parcel.writeByte(if (signedApi) 1 else 0)
+     }
+ 
+     override fun describeContents(): Int {
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/usecase/launcher/LaunchActivityUseCase.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/usecase/launcher/LaunchActivityUseCase.kt
 index 8f097b8..44096b2 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/domain/usecase/launcher/LaunchActivityUseCase.kt
@@ -913,6 +1167,27 @@ index e5dad8b..a38a285 100644
      </PreferenceCategory>
  
      <PreferenceCategory
+diff --git a/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImplTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImplTest.kt
+index 2523804..d719631 100644
+--- a/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImplTest.kt
++++ b/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImplTest.kt
+@@ -1,6 +1,7 @@
+ package de.szalkowski.activitylauncher.data.launcher
+ 
+ import android.content.ComponentName
++import android.content.Context
+ import android.content.Intent
+ import de.szalkowski.activitylauncher.domain.launcher.ShortcutCreator
+ import de.szalkowski.activitylauncher.domain.usecase.launcher.GetActivityIconUseCase
+@@ -19,7 +20,7 @@ class ViewIntentParserImplTest {
+ 
+     @Before
+     fun setup() {
+-        parser = ViewIntentParserImpl(getActivityIconUseCase)
++        parser = ViewIntentParserImpl(getActivityIconUseCase, mock<Context>())
+     }
+ 
+     private fun withMockedIntent(block: () -> Unit) {
 diff --git a/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt
 index 560ee48..afa8d1b 100644
 --- a/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt
@@ -1036,20 +1311,147 @@ index 0000000..5c345b3
 +| `toybox` | Device/release-specific multicall binary; use only the device copy behind an allow-list. |
 +| `libconscrypt_openjdk_jni.so`, `libc++.so`, `libext2_uuid-host.so`, `libhidl-gen-utils.so` | Host/build-tool libraries, not Android ARM app dependencies. |
 +| `ld-android.so` | Android dynamic loader, not an application library. |
+diff --git a/SIGNED_PLUGIN_API.md b/SIGNED_PLUGIN_API.md
+new file mode 100644
+index 0000000..7021324
+--- /dev/null
++++ b/SIGNED_PLUGIN_API.md
+@@ -0,0 +1,20 @@
++# Signed plugin API
++
++Activity Launcher supports two plugin paths:
++
++- the legacy intent-based plugin contract for existing integrations;
++- the signed contract for new plugins.
++
++New plugins should expose an activity for
++`activitylauncher.intent.action.SIGNED_PLUGIN_LAUNCH`, declare
++`de.szalkowski.activitylauncher.permission.SIGNED_PLUGIN`, and request the same
++signature permission. Activity Launcher only presents this handler when Android
++grants that signature permission to the plugin package.
++
++APK/DEX loading is additionally restricted by `SignedPluginLoader`: the archive
++must be a regular file below the size limit, must have the same signing
++certificate as Activity Launcher, and the requested class must implement
++`ActivityLauncherPlugin` with a public no-argument constructor.
++
++Plugins are never downloaded, installed, or loaded implicitly. The caller must
++select a local APK explicitly and handle the returned `Result`.
 diff --git a/app/src/main/cpp/CMakeLists.txt b/app/src/main/cpp/CMakeLists.txt
 new file mode 100644
-index 0000000..92794e0
+index 0000000..5456d36
 --- /dev/null
 +++ b/app/src/main/cpp/CMakeLists.txt
-@@ -0,0 +1,8 @@
+@@ -0,0 +1,15 @@
 +cmake_minimum_required(VERSION 3.22.1)
 +
 +project(activitylauncher_worker LANGUAGES CXX)
 +
-+add_library(activitylauncher_worker SHARED activitylauncher_worker.cpp)
++add_library(
++    activitylauncher_worker
++    SHARED
++    activitylauncher_worker.cpp
++    activitylauncher_diagnostics.cpp
++)
 +
 +target_compile_features(activitylauncher_worker PRIVATE cxx_std_17)
-+target_compile_options(activitylauncher_worker PRIVATE -Wall -Wextra)
++target_compile_options(activitylauncher_worker PRIVATE -Wall -Wextra -fvisibility=hidden)
++target_link_options(activitylauncher_worker PRIVATE -Wl,--exclude-libs,ALL)
++target_link_libraries(activitylauncher_worker PRIVATE log dl)
+diff --git a/app/src/main/cpp/activitylauncher_diagnostics.cpp b/app/src/main/cpp/activitylauncher_diagnostics.cpp
+new file mode 100644
+index 0000000..ade70c2
+--- /dev/null
++++ b/app/src/main/cpp/activitylauncher_diagnostics.cpp
+@@ -0,0 +1,88 @@
++#include <jni.h>
++
++#include <atomic>
++#include <cerrno>
++#include <cstdint>
++#include <cstring>
++#include <dlfcn.h>
++#include <mutex>
++#include <string>
++
++namespace {
++constexpr size_t kMaxFieldLength = 256;
++std::atomic<uint64_t> gEventCount{0};
++std::mutex gDiagnosticMutex;
++
++bool copyJString(JNIEnv* env, jstring value, std::string* output) {
++    if (env == nullptr || value == nullptr || output == nullptr) return false;
++    const char* chars = env->GetStringUTFChars(value, nullptr);
++    if (chars == nullptr) return false;
++    const size_t length = strlen(chars);
++    const bool valid = length <= kMaxFieldLength;
++    if (valid) output->assign(chars, length);
++    env->ReleaseStringUTFChars(value, chars);
++    return valid;
++}
++
++uint64_t anonymizedHash(const std::string& value) {
++    // FNV-1a is used only as a non-reversible telemetry label, never as authentication.
++    uint64_t hash = 1469598103934665603ULL;
++    for (unsigned char byte : value) {
++        hash ^= byte;
++        hash *= 1099511628211ULL;
++    }
++    return hash;
++}
++}  // namespace
++
++extern "C" __attribute__((visibility("default"))) int activitylauncher_diagnostic_ping() {
++    return 1;
++}
++
++extern "C" JNIEXPORT jlong JNICALL
++Java_de_szalkowski_activitylauncher_data_launcher_NativeDiagnostics_nativeRecord(
++    JNIEnv* env,
++    jclass,
++    jstring event,
++    jstring value
++) {
++    std::string eventValue;
++    std::string dataValue;
++    if (!copyJString(env, event, &eventValue) || !copyJString(env, value, &dataValue)) {
++        return -EINVAL;
++    }
++
++    const uint64_t eventHash = anonymizedHash(eventValue);
++    const uint64_t valueHash = anonymizedHash(dataValue);
++    {
++        std::lock_guard<std::mutex> lock(gDiagnosticMutex);
++        // Only hashes and a counter are retained; raw input is never logged or stored.
++        (void)eventHash;
++        (void)valueHash;
++        gEventCount.fetch_add(1, std::memory_order_relaxed);
++    }
++    return static_cast<jlong>(gEventCount.load(std::memory_order_relaxed));
++}
++
++extern "C" JNIEXPORT jint JNICALL
++Java_de_szalkowski_activitylauncher_data_launcher_NativeDiagnostics_nativeResolveOwnSymbol(
++    JNIEnv*,
++    jclass
++) {
++    dlerror();
++    void* handle = dlopen("libactivitylauncher_worker.so", RTLD_NOW | RTLD_LOCAL);
++    if (handle == nullptr) return -ENOENT;
++
++    dlerror();
++    void* symbol = dlsym(handle, "activitylauncher_diagnostic_ping");
++    const char* error = dlerror();
++    if (symbol == nullptr || error != nullptr) {
++        dlclose(handle);
++        return -ENOENT;
++    }
++
++    using Ping = int (*)();
++    const int result = reinterpret_cast<Ping>(symbol)();
++    dlclose(handle);
++    return result;
++}
 diff --git a/app/src/main/cpp/activitylauncher_worker.cpp b/app/src/main/cpp/activitylauncher_worker.cpp
 new file mode 100644
 index 0000000..f3b5b98
@@ -1740,6 +2142,40 @@ index 0000000..f22fc7c
 +        }
 +    }
 +}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeDiagnostics.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeDiagnostics.kt
+new file mode 100644
+index 0000000..707d589
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeDiagnostics.kt
+@@ -0,0 +1,28 @@
++package de.szalkowski.activitylauncher.data.launcher
++
++/** Explicit, app-local native diagnostics; it does not hook or inspect other processes. */
++object NativeDiagnostics {
++    private val loaded: Boolean by lazy {
++        runCatching {
++            System.loadLibrary("activitylauncher_worker")
++            true
++        }.getOrDefault(false)
++    }
++
++    @JvmStatic
++    private external fun nativeRecord(event: String, value: String): Long
++
++    @JvmStatic
++    private external fun nativeResolveOwnSymbol(): Int
++
++    fun record(event: String, value: String): Long {
++        if (!loaded || event.length > MAX_FIELD_LENGTH || value.length > MAX_FIELD_LENGTH) return -1L
++        return runCatching { nativeRecord(event, value) }.getOrDefault(-1L)
++    }
++
++    fun resolveOwnSymbol(): Boolean {
++        return loaded && runCatching { nativeResolveOwnSymbol() == 1 }.getOrDefault(false)
++    }
++
++    private const val MAX_FIELD_LENGTH = 256
++}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeWorker.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeWorker.kt
 new file mode 100644
 index 0000000..47a9576
@@ -2085,6 +2521,147 @@ index 0000000..93230ce
 +        private const val PER_USER_RANGE = 100_000
 +    }
 +}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/plugin/SignedPluginLoader.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/plugin/SignedPluginLoader.kt
+new file mode 100644
+index 0000000..c5139a7
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/plugin/SignedPluginLoader.kt
+@@ -0,0 +1,135 @@
++package de.szalkowski.activitylauncher.data.plugin
++
++import android.content.Context
++import android.content.pm.PackageManager
++import android.content.pm.Signature
++import android.os.Build
++import dalvik.system.DexClassLoader
++import de.szalkowski.activitylauncher.domain.plugin.ActivityLauncherPlugin
++import java.io.File
++import java.io.FileInputStream
++import java.io.FileOutputStream
++import java.security.MessageDigest
++import javax.inject.Inject
++
++/** Loads only same-signature APKs and only classes implementing ActivityLauncherPlugin. */
++class SignedPluginLoader @Inject constructor() {
++    fun load(context: Context, apk: File, className: String): Result<ActivityLauncherPlugin> {
++        return runCatching {
++            require(apk.isFile && apk.length() in 1..MAX_APK_BYTES) { "Invalid plugin APK" }
++            require(className.isNotBlank() && className.length <= MAX_CLASS_NAME_LENGTH) {
++                "Invalid plugin class name"
++            }
++            require(hasSameSigningCertificate(context, apk)) { "Plugin signature is not trusted" }
++
++            val pluginDir = File(context.cacheDir, "signed_plugins").apply { mkdirs() }
++            val copiedApk = File(pluginDir, "plugin-${sha256(apk)}.apk")
++            if (!copiedApk.isFile || copiedApk.length() != apk.length()) {
++                copyBounded(apk, copiedApk)
++            }
++            val optimizedDir = File(pluginDir, "optimized").apply { mkdirs() }
++            val classLoader = DexClassLoader(
++                copiedApk.absolutePath,
++                optimizedDir.absolutePath,
++                null,
++                context.classLoader,
++            )
++            val clazz = Class.forName(className, true, classLoader)
++            require(ActivityLauncherPlugin::class.java.isAssignableFrom(clazz)) {
++                "Plugin class does not implement ActivityLauncherPlugin"
++            }
++            @Suppress("UNCHECKED_CAST")
++            val plugin = clazz.getDeclaredConstructor().newInstance() as ActivityLauncherPlugin
++            plugin.onLoad(context)
++            plugin
++        }
++    }
++
++    private fun copyBounded(source: File, destination: File) {
++        val temporary = File(destination.parentFile, "${destination.name}.tmp")
++        try {
++            FileInputStream(source).use { input ->
++                FileOutputStream(temporary).use { output ->
++                    val buffer = ByteArray(BUFFER_SIZE)
++                    var copied = 0L
++                    while (true) {
++                        val count = input.read(buffer)
++                        if (count < 0) break
++                        copied += count
++                        require(copied <= MAX_APK_BYTES) { "Plugin APK is too large" }
++                        output.write(buffer, 0, count)
++                    }
++                    output.fd.sync()
++                }
++            }
++            require(temporary.length() == source.length()) { "Plugin APK copy is incomplete" }
++            if (!temporary.renameTo(destination)) {
++                throw IllegalStateException("Cannot finalize plugin APK copy")
++            }
++        } finally {
++            temporary.delete()
++        }
++    }
++
++    private fun hasSameSigningCertificate(context: Context, apk: File): Boolean {
++        val archive = packageInfo(context.packageManager, apk.absolutePath) ?: return false
++        val app = appPackageInfo(context.packageManager, context.packageName) ?: return false
++        val archiveSignatures = signatures(archive)
++        val appSignatures = signatures(app)
++        return archiveSignatures.isNotEmpty() && archiveSignatures.toSet() == appSignatures.toSet()
++    }
++
++    private fun packageInfo(pm: PackageManager, path: String): android.content.pm.PackageInfo? {
++        @Suppress("DEPRECATION")
++        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++            PackageManager.GET_SIGNING_CERTIFICATES
++        } else {
++            PackageManager.GET_SIGNATURES
++        }
++        return pm.getPackageArchiveInfo(path, flags)
++    }
++
++    private fun appPackageInfo(pm: PackageManager, packageName: String): android.content.pm.PackageInfo? {
++        @Suppress("DEPRECATION")
++        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++            PackageManager.GET_SIGNING_CERTIFICATES
++        } else {
++            PackageManager.GET_SIGNATURES
++        }
++        return pm.getPackageInfo(packageName, flags)
++    }
++
++    private fun signatures(info: android.content.pm.PackageInfo): Set<ByteArrayKey> {
++        val values: Array<Signature> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++            info.signingInfo?.apkContentsSigners.orEmpty()
++        } else {
++            @Suppress("DEPRECATION")
++            info.signatures.orEmpty()
++        }
++        return values.map { ByteArrayKey(it.toByteArray()) }.toSet()
++    }
++
++    private fun sha256(file: File): String {
++        val digest = MessageDigest.getInstance("SHA-256")
++        FileInputStream(file).use { input ->
++            val buffer = ByteArray(BUFFER_SIZE)
++            while (true) {
++                val count = input.read(buffer)
++                if (count < 0) break
++                digest.update(buffer, 0, count)
++            }
++        }
++        return digest.digest().joinToString("") { "%02x".format(it) }
++    }
++
++    private data class ByteArrayKey(val bytes: ByteArray) {
++        override fun equals(other: Any?): Boolean = other is ByteArrayKey && bytes.contentEquals(other.bytes)
++        override fun hashCode(): Int = bytes.contentHashCode()
++    }
++
++    companion object {
++        private const val BUFFER_SIZE = 8192
++        private const val MAX_APK_BYTES = 50L * 1024L * 1024L
++        private const val MAX_CLASS_NAME_LENGTH = 256
++    }
++}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt
 new file mode 100644
 index 0000000..75069ad
@@ -2151,6 +2728,21 @@ index 0000000..ad33d5c
 +    val started: Boolean,
 +    val message: String? = null,
 +)
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/SignedPluginContract.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/SignedPluginContract.kt
+new file mode 100644
+index 0000000..5ea04b6
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/SignedPluginContract.kt
+@@ -0,0 +1,9 @@
++package de.szalkowski.activitylauncher.domain.launcher
++
++/** Stable, signature-protected contract for first-party or same-signature plugins. */
++object SignedPluginContract {
++    const val ACTION_LAUNCH = "activitylauncher.intent.action.SIGNED_PLUGIN_LAUNCH"
++    const val PERMISSION = "de.szalkowski.activitylauncher.permission.SIGNED_PLUGIN"
++    const val API_VERSION = 1
++    const val EXTRA_API_VERSION = "activitylauncher.plugin_api_version"
++}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt
 new file mode 100644
 index 0000000..c4d3285
@@ -2172,6 +2764,23 @@ index 0000000..c4d3285
 +    ROOT_SU,
 +    JVM,
 +    JNI_NATIVE,
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/plugin/ActivityLauncherPlugin.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/plugin/ActivityLauncherPlugin.kt
+new file mode 100644
+index 0000000..a39145f
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/plugin/ActivityLauncherPlugin.kt
+@@ -0,0 +1,11 @@
++package de.szalkowski.activitylauncher.domain.plugin
++
++import android.content.Context
++
++/**
++ * Minimal contract for code loaded from a same-signature plugin APK.
++ * Implementations must expose a public no-argument constructor.
++ */
++interface ActivityLauncherPlugin {
++    fun onLoad(context: Context)
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/ActivityLaunchService.kt b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/ActivityLaunchService.kt
 new file mode 100644
@@ -2752,5 +3361,45 @@ index 0000000..208368e
 +
 +        assertTrue(markers.containsAll(setOf("strictmode", "developer", "trace")))
 +        assertTrue(findings.all { it.details?.contains("nie potwierdza") == true })
++    }
++}
+diff --git a/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ContentUriIntentReaderFuzzTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ContentUriIntentReaderFuzzTest.kt
+new file mode 100644
+index 0000000..bbe7a3a
+--- /dev/null
++++ b/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ContentUriIntentReaderFuzzTest.kt
+@@ -0,0 +1,34 @@
++package de.szalkowski.activitylauncher.data.launcher
++
++import android.content.Intent
++import org.junit.Assert.assertNull
++import org.junit.Test
++import kotlin.random.Random
++
++/** Crash-resistance test for the app-owned content URI text parser only. */
++class ContentUriIntentReaderFuzzTest {
++    @Test
++    fun randomInputsNeverEscapeTheParser() {
++        repeat(2_000) {
++            val value = buildString {
++                repeat(Random.nextInt(0, 256)) {
++                    append(Random.nextInt(0, 128).toChar())
++                }
++            }
++            runCatching {
++                val parsed = parse(value)
++                if (parsed != null) check(parsed.component != null)
++            }.onFailure { error ->
++                throw AssertionError("Parser crashed for fuzz input", error)
++            }
++        }
++    }
++
++    private fun parse(value: String): Intent? {
++        val candidate = value.trim()
++        if (candidate.isEmpty() || candidate.any { it == '\u0000' }) return null
++        return runCatching { Intent.parseUri(candidate, Intent.URI_INTENT_SCHEME) }
++            .getOrNull()
++            ?.takeIf { it.component != null }
 +    }
 +}

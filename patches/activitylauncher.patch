@@ -1095,7 +1095,7 @@ index 0000000..f5eb7ab
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..e178047
+index 0000000..1dfd46a
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 @@ -0,0 +1,56 @@
@@ -1115,6 +1115,7 @@ index 0000000..e178047
 +    DENIED,
 +    GRANTED,
 +}
++
 +/**
 + * Shizuku-backed activity launcher. It sends an argument vector to `am` directly and never
 + * invokes `sh -c`, so component names and extras cannot become shell syntax.
@@ -1153,7 +1154,6 @@ index 0000000..e178047
 +            )
 +        }
 +    }
-+
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt
 new file mode 100644

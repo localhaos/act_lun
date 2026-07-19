@@ -3369,10 +3369,10 @@ index 0000000..b7215ec
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootPluginActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootPluginActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..245ddff
+index 0000000..964a7ed
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootPluginActivityLaunchExecutor.kt
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,69 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.ComponentName
@@ -3418,6 +3418,7 @@ index 0000000..245ddff
 +
 +    private fun findPlugin(): ComponentName? {
 +        val packageManager = context.packageManager
++
 +        @Suppress("DEPRECATION")
 +        val handlers = packageManager.queryIntentActivities(
 +            Intent(SignedPluginContract.ACTION_LAUNCH).setPackage(ROOT_PLUGIN_PACKAGE),

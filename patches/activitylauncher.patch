@@ -659,7 +659,7 @@ index 0000000..92794e0
 +target_compile_options(activitylauncher_worker PRIVATE -Wall -Wextra)
 diff --git a/app/src/main/cpp/activitylauncher_worker.cpp b/app/src/main/cpp/activitylauncher_worker.cpp
 new file mode 100644
-index 0000000..519da59
+index 0000000..6b328e2
 --- /dev/null
 +++ b/app/src/main/cpp/activitylauncher_worker.cpp
 @@ -0,0 +1,85 @@
@@ -689,7 +689,7 @@ index 0000000..519da59
 +Java_de_szalkowski_activitylauncher_data_launcher_NativeWorker_nativeSpawn(
 +    JNIEnv* env,
 +    jclass,
-+    jobjectArray command,
++    jobjectArray command
 +) {
 +    if (command == nullptr) return -EINVAL;
 +
@@ -734,7 +734,7 @@ index 0000000..519da59
 +extern "C" JNIEXPORT jint JNICALL
 +Java_de_szalkowski_activitylauncher_data_launcher_NativeWorker_nativeAbiLevel(
 +    JNIEnv*,
-+    jclass,
++    jclass
 +) {
 +#if defined(__aarch64__)
 +    return 1;

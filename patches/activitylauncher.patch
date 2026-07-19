@@ -1,0 +1,1473 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 68a54b7..3cea6f8 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -16,8 +16,8 @@ android {
+             providers.environmentVariable("APPID").getOrElse("de.szalkowski.activitylauncher")
+         minSdk = 16
+         targetSdk = 37
+-        versionCode = 20406
+-        versionName = "2.4.1"
++        versionCode = providers.gradleProperty("activityLauncherVersionCode").getOrElse("20406").toInt()
++        versionName = providers.gradleProperty("activityLauncherVersionName").getOrElse("2.4.1")
+ 
+         vectorDrawables.useSupportLibrary = true
+         testInstrumentationRunner = "de.szalkowski.activitylauncher.HiltTestRunner"
+@@ -195,6 +195,8 @@ dependencies {
+     implementation("androidx.navigation:navigation-ui-ktx:2.7.7")
+     implementation("androidx.preference:preference-ktx:1.2.1")
+     implementation("com.google.dagger:hilt-android:2.59.2")
++    implementation("dev.rikka.shizuku:api:13.1.5")
++    implementation("dev.rikka.shizuku:provider:13.1.5")
+ 
+     val roomVersion = "2.6.1"
+     implementation("androidx.room:room-runtime:$roomVersion")
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index b1e2f6a..67f0f4a 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -6,6 +6,7 @@
+     <uses-permission
+         android:name="android.permission.QUERY_ALL_PACKAGES"
+         tools:ignore="QueryAllPackagesPermission" />
++    <uses-permission android:name="moe.shizuku.privileged.api.PERMISSION_GRANTED" />
+ 
+     <permission
+         android:name="de.szalkowski.activitylauncher.permission.CREATE_SHORTCUT"
+@@ -115,6 +116,20 @@
+             android:label="@string/activity_settings"
+             android:theme="@style/Theme.ActivityLauncher.NoActionBar" />
+ 
++        <activity
++            android:name=".entrypoint.AuditActivity"
++            android:exported="false"
++            android:label="@string/title_activity_audit"
++            android:theme="@style/Theme.ActivityLauncher.NoActionBar" />
++
++        <provider
++            android:name="rikka.shizuku.ShizukuProvider"
++            android:authorities="${applicationId}.shizuku"
++            android:enabled="@bool/shizuku_provider_enabled"
++            android:exported="true"
++            android:multiprocess="false"
++            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
++
+         <activity
+             android:name=".entrypoint.QSTileNavHostActivity"
+             android:exported="false"
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
+index b7592b7..cc1522c 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
+@@ -6,24 +6,42 @@ import android.widget.Toast
+ import dagger.hilt.android.qualifiers.ApplicationContext
+ import de.szalkowski.activitylauncher.R
+ import de.szalkowski.activitylauncher.domain.launcher.ActivityLauncher
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
+ import de.szalkowski.activitylauncher.domain.model.LaunchRequest
+ import javax.inject.Inject
+ 
+ class ActivityLauncherImpl @Inject constructor(@ApplicationContext private val context: Context) :
+     ActivityLauncher {
+     override fun launchActivity(request: LaunchRequest) {
+-        val intent = request.intent
+-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++        val result = when (request.backend) {
++            ActivityLaunchBackend.DEFAULT -> launchDefault(request.intent)
++            ActivityLaunchBackend.SHIZUKU_PLUS -> ShizukuActivityLaunchExecutor().launch(request.intent)
++            ActivityLaunchBackend.JVM -> JvmActivityLaunchExecutor().launch(request.intent)
++            ActivityLaunchBackend.JNI_NATIVE -> NativeActivityLaunchExecutor().launch(request.intent)
++        }
+ 
+-        try {
+-            context.startActivity(intent)
+-        } catch (e: Exception) {
+-            e.printStackTrace()
++        if (!result.started) {
+             Toast.makeText(
+                 context,
+-                context.getText(R.string.error).toString() + ": " + e,
++                listOfNotNull(context.getText(R.string.error).toString(), result.message)
++                    .joinToString(": "),
+                 Toast.LENGTH_LONG,
+             ).show()
+         }
+     }
++
++    private fun launchDefault(intent: Intent): ActivityLaunchResult {
++        val activityIntent = Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++        return runCatching {
++            context.startActivity(activityIntent)
++            ActivityLaunchResult(started = true)
++        }.getOrElse { error ->
++            error.printStackTrace()
++            ActivityLaunchResult(
++                started = false,
++                message = error.message ?: error::class.java.simpleName,
++            )
++        }
++    }
+ }
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/LaunchRequest.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/LaunchRequest.kt
+index 001ec2d..76571ab 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/LaunchRequest.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/LaunchRequest.kt
+@@ -6,4 +6,5 @@ import android.content.Intent
+ data class LaunchRequest(
+     val intent: Intent,
+     val launcherPlugin: ComponentName? = null,
++    val backend: ActivityLaunchBackend = ActivityLaunchBackend.DEFAULT,
+ )
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/usecase/launcher/LaunchActivityUseCase.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/usecase/launcher/LaunchActivityUseCase.kt
+index 8f097b8..44096b2 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/domain/usecase/launcher/LaunchActivityUseCase.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/usecase/launcher/LaunchActivityUseCase.kt
+@@ -3,6 +3,7 @@ package de.szalkowski.activitylauncher.domain.usecase.launcher
+ import android.util.Log
+ import de.szalkowski.activitylauncher.domain.launcher.ActivityLauncher
+ import de.szalkowski.activitylauncher.domain.launcher.ActivityLauncherProxy
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
+ import de.szalkowski.activitylauncher.domain.model.LaunchRequest
+ import de.szalkowski.activitylauncher.domain.model.PluginInfo
+ import de.szalkowski.activitylauncher.domain.recents.RecentsRepository
+@@ -16,7 +17,9 @@ class LaunchActivityUseCase @Inject constructor(
+     operator fun invoke(request: LaunchRequest) {
+         val component = request.intent.component ?: return
+         Log.i("LaunchActivityUseCase", "Launching activity: ${component.flattenToShortString()}")
+-        if (request.launcherPlugin != null || activityLauncherProxy.hasMultipleHandlers()) {
++        if (request.backend != ActivityLaunchBackend.DEFAULT) {
++            activityLauncher.launchActivity(request)
++        } else if (request.launcherPlugin != null || activityLauncherProxy.hasMultipleHandlers()) {
+             activityLauncherProxy.launchActivity(request)
+         } else {
+             activityLauncher.launchActivity(request)
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
+index 6251a88..1288052 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
+@@ -1,6 +1,7 @@
+ package de.szalkowski.activitylauncher.presentation.activities
+ 
+ import android.content.ComponentName
++import android.content.Intent
+ import android.os.Bundle
+ import android.view.LayoutInflater
+ import android.view.Menu
+@@ -23,6 +24,8 @@ import dagger.hilt.android.AndroidEntryPoint
+ import de.szalkowski.activitylauncher.R
+ import de.szalkowski.activitylauncher.databinding.FragmentActivityDetailsBinding
+ import de.szalkowski.activitylauncher.domain.external.ReviewRequester
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
++import de.szalkowski.activitylauncher.entrypoint.AuditActivity
+ import de.szalkowski.activitylauncher.presentation.common.IconPickerDialogFragment
+ import de.szalkowski.activitylauncher.presentation.common.PluginChooserDialogFragment
+ import kotlinx.coroutines.launch
+@@ -97,6 +100,21 @@ class ActivityDetailsFragment : Fragment() {
+                             viewModel.shareActivity()
+                             true
+                         }
++                        R.id.action_audit -> {
++                            startActivity(
++                                Intent(requireContext(), AuditActivity::class.java)
++                                    .putExtra(AuditActivity.EXTRA_PACKAGE_NAME, viewModel.editedPackage.value),
++                            )
++                            true
++                        }
++                        R.id.action_launch_jvm -> {
++                            viewModel.launchWithBackend(ActivityLaunchBackend.JVM)
++                            true
++                        }
++                        R.id.action_launch_native -> {
++                            viewModel.launchWithBackend(ActivityLaunchBackend.JNI_NATIVE)
++                            true
++                        }
+                         else -> false
+                     }
+                 }
+@@ -145,6 +163,11 @@ class ActivityDetailsFragment : Fragment() {
+                         binding.btLaunchChooser.isEnabled = isEnabled
+                     }
+                 }
++                launch {
++                    viewModel.canLaunchShizuku.collect { isEnabled ->
++                        binding.btLaunchShizuku.isEnabled = isEnabled
++                    }
++                }
+                 launch {
+                     viewModel.canCreateShortcut.collect { isEnabled ->
+                         binding.btCreateShortcut.isEnabled = isEnabled
+@@ -205,6 +228,10 @@ class ActivityDetailsFragment : Fragment() {
+             viewModel.launchActivity()
+         }
+ 
++        binding.btLaunchShizuku.setOnClickListener {
++            viewModel.launchWithShizuku()
++        }
++
+         binding.btLaunchChooser.setOnClickListener {
+             val dialog = PluginChooserDialogFragment.newInstance(
+                 PluginChooserDialogFragment.PluginAction.LAUNCH,
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
+index 7b6daa8..90237cc 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
+@@ -10,8 +10,11 @@ import androidx.lifecycle.viewModelScope
+ import dagger.hilt.android.lifecycle.HiltViewModel
+ import de.szalkowski.activitylauncher.R
+ import de.szalkowski.activitylauncher.core.util.getActivityIntent
++import de.szalkowski.activitylauncher.data.launcher.ShizukuActivityLaunchExecutor
++import de.szalkowski.activitylauncher.data.launcher.ShizukuState
+ import de.szalkowski.activitylauncher.domain.favorites.FavoritesRepository
+ import de.szalkowski.activitylauncher.domain.launcher.IconLoader
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
+ import de.szalkowski.activitylauncher.domain.model.LaunchRequest
+ import de.szalkowski.activitylauncher.domain.model.MyActivityInfo
+ import de.szalkowski.activitylauncher.domain.model.PluginInfo
+@@ -34,6 +37,7 @@ import kotlinx.coroutines.flow.collectLatest
+ import kotlinx.coroutines.flow.combine
+ import kotlinx.coroutines.flow.debounce
+ import kotlinx.coroutines.flow.filter
++import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.flow.stateIn
+ import kotlinx.coroutines.launch
+ import javax.inject.Inject
+@@ -50,6 +54,7 @@ class ActivityDetailsViewModel @Inject constructor(
+     private val iconLoader: IconLoader,
+     val settingsRepository: SettingsRepository,
+     savedStateHandle: SavedStateHandle,
++    private val shizukuExecutor: ShizukuActivityLaunchExecutor = ShizukuActivityLaunchExecutor(),
+ ) : ViewModel() {
+ 
+     private val componentName: ComponentName = savedStateHandle.get<ComponentName>("activityComponentName")
+@@ -77,6 +82,10 @@ class ActivityDetailsViewModel @Inject constructor(
+         pkg.isNotBlank() && cls.isNotBlank()
+     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+ 
++    val canLaunchShizuku: StateFlow<Boolean> = canLaunch
++        .map { it && shizukuExecutor.isAvailable() }
++        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
++
+     val canCreateShortcut: StateFlow<Boolean> =
+         combine(_editedName, _editedPackage, _editedClass) { name, pkg, cls ->
+             name.isNotBlank() && pkg.isNotBlank() && cls.isNotBlank()
+@@ -216,6 +225,45 @@ class ActivityDetailsViewModel @Inject constructor(
+         launchActivityUseCase(request)
+     }
+ 
++    fun launchWithShizuku() {
++        val info = getEditedActivityInfo()
++        val request = LaunchRequest(
++            intent = getActivityIntent(info.componentName, Bundle()),
++            backend = ActivityLaunchBackend.SHIZUKU_PLUS,
++        )
++
++        when (shizukuExecutor.state()) {
++            ShizukuState.GRANTED -> launchActivityUseCase(request)
++            ShizukuState.DENIED -> {
++                shizukuExecutor.requestPermission { granted ->
++                    viewModelScope.launch {
++                        if (granted) {
++                            launchActivityUseCase(request)
++                        } else {
++                            _errorMessage.emit(R.string.error_shizuku_permission)
++                        }
++                    }
++                }
++            }
++            ShizukuState.STOPPED -> viewModelScope.launch {
++                _errorMessage.emit(R.string.error_shizuku_not_running)
++            }
++            ShizukuState.UNSUPPORTED -> viewModelScope.launch {
++                _errorMessage.emit(R.string.error_shizuku_unsupported)
++            }
++        }
++    }
++
++    fun launchWithBackend(backend: ActivityLaunchBackend) {
++        val info = getEditedActivityInfo()
++        launchActivityUseCase(
++            LaunchRequest(
++                intent = getActivityIntent(info.componentName, Bundle()),
++                backend = backend,
++            ),
++        )
++    }
++
+     fun shareActivity() {
+         val info = getEditedActivityInfo()
+         shareActivityUseCase(info.componentName)
+diff --git a/app/src/main/res/layout/fragment_activity_details.xml b/app/src/main/res/layout/fragment_activity_details.xml
+index ba56747..6af3d96 100644
+--- a/app/src/main/res/layout/fragment_activity_details.xml
++++ b/app/src/main/res/layout/fragment_activity_details.xml
+@@ -114,6 +114,17 @@
+                 app:icon="@drawable/ic_more_vert" />
+         </LinearLayout>
+ 
++        <com.google.android.material.button.MaterialButton
++            android:id="@+id/btLaunchShizuku"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:layout_marginHorizontal="8dp"
++            android:layout_marginTop="8dp"
++            app:icon="@drawable/ic_rocket_launch"
++            app:iconTint="?attr/colorOnPrimary"
++            android:text="@string/context_action_launch_shizuku"
++            app:layout_constraintTop_toBottomOf="@+id/llLaunch" />
++
+         <LinearLayout
+             android:id="@+id/llCreateShortcut"
+             android:layout_width="match_parent"
+@@ -121,7 +132,7 @@
+             android:layout_marginHorizontal="8dp"
+             android:layout_marginTop="8dp"
+             android:orientation="horizontal"
+-            app:layout_constraintTop_toBottomOf="@+id/llLaunch">
++            app:layout_constraintTop_toBottomOf="@+id/btLaunchShizuku">
+ 
+             <com.google.android.material.button.MaterialButton
+                 android:id="@+id/btCreateShortcut"
+diff --git a/app/src/main/res/menu/menu_activity_details.xml b/app/src/main/res/menu/menu_activity_details.xml
+index 508ab02..ae1b569 100644
+--- a/app/src/main/res/menu/menu_activity_details.xml
++++ b/app/src/main/res/menu/menu_activity_details.xml
+@@ -11,4 +11,16 @@
+         android:title="@string/context_action_share"
+         android:icon="@drawable/ic_share"
+         app:showAsAction="ifRoom" />
++    <item
++        android:id="@+id/action_audit"
++        android:title="@string/context_action_audit"
++        app:showAsAction="never" />
++    <item
++        android:id="@+id/action_launch_jvm"
++        android:title="@string/context_action_launch_jvm"
++        app:showAsAction="never" />
++    <item
++        android:id="@+id/action_launch_native"
++        android:title="@string/context_action_launch_native"
++        app:showAsAction="never" />
+ </menu>
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 4893048..fafe1f8 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -11,6 +11,10 @@
+     <string name="context_action_favorite_add" comment="Context menu action to add an activity to the favorites list">Add to favorites</string>
+     <string name="context_action_favorite_remove" comment="Context menu action to remove an activity from the favorites list">Remove from favorites</string>
+     <string name="context_action_launch" comment="Context menu action to launch an activity normally">Launch activity</string>
++    <string name="context_action_launch_shizuku">Launch with Shizuku+</string>
++    <string name="context_action_launch_jvm">Launch via JVM executor</string>
++    <string name="context_action_launch_native">Launch via JNI/native executor</string>
++    <string name="context_action_audit">Audit package</string>
+     <string name="context_action_share" comment="App bar action to share the current activity or app info">Share</string>
+     <string name="context_action_share_shortcut" comment="Context menu action to share a created shortcut as a link">Share shortcut</string>
+     <string name="context_action_shortcut" comment="Context menu action to create a home screen shortcut for an activity">Create shortcut</string>
+@@ -23,6 +27,9 @@
+     <string name="error_invalid_activity_link" comment="Error message for invalid deep link or activity reference">Invalid activity link provided</string>
+     <string name="error_invalid_icon_format" comment="Error message when the selected icon file format is not supported">Error: invalid icon format</string>
+     <string name="error_invalid_icon_resource" comment="Error message for invalid or non-existent icon resource">Error: invalid icon resource</string>
++    <string name="error_shizuku_permission">Shizuku permission was not granted.</string>
++    <string name="error_shizuku_not_running">Shizuku is not running.</string>
++    <string name="error_shizuku_unsupported">Shizuku+ requires Android 6.0 or newer.</string>
+     <string name="error_verbose_pin_shortcut" comment="Error message when the device launcher does not support pinning shortcuts">Current launcher does not support "PinShortcut". Unable to create shortcut.</string>
+     <string name="exception_invalid_component_name" comment="Error message for dangerous or invalid component names. %s is the problematic component">Invalid or potentially harmful component name: %s</string>
+     <string name="filter_hint" comment="Hint text in the filter search input field">package/action</string>
+@@ -56,4 +63,12 @@
+     <string name="title_dialog_support" comment="Dialog title for the support/donate dialog">Thanks for using Activity Launcher</string>
+     <string name="title_fragment_activity_list" comment="Screen title showing activities within a selected package">Activities</string>
+     <string name="title_fragment_package_list" comment="Screen title for the list of installed packages/apps">Installed packages</string>
++    <string name="title_activity_audit">APK / developer audit</string>
++    <string name="action_run_audit">Run audit</string>
++    <string name="action_copy_report">Copy report</string>
++    <string name="audit_not_run">Audit has not run yet.</string>
++    <string name="audit_running">Scanning %s…</string>
++    <string name="audit_complete">Audit complete: %s</string>
++    <string name="audit_failed">Audit failed: %s</string>
++    <string name="audit_copied">Report copied</string>
+ </resources>
+diff --git a/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt
+index 560ee48..afa8d1b 100644
+--- a/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt
++++ b/app/src/test/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModelTest.kt
+@@ -7,6 +7,7 @@ import de.szalkowski.activitylauncher.R
+ import de.szalkowski.activitylauncher.core.util.getActivityIntent
+ import de.szalkowski.activitylauncher.domain.favorites.FavoritesRepository
+ import de.szalkowski.activitylauncher.domain.launcher.IconLoader
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
+ import de.szalkowski.activitylauncher.domain.model.LaunchRequest
+ import de.szalkowski.activitylauncher.domain.model.MyActivityInfo
+ import de.szalkowski.activitylauncher.domain.model.PluginInfo
+@@ -119,6 +120,24 @@ class ActivityDetailsViewModelTest {
+         }
+     }
+ 
++    @Test
++    fun `should pass explicit JVM backend to launch use case`() {
++        val mockIntent = mock<android.content.Intent>()
++        val utilClass = Class.forName("de.szalkowski.activitylauncher.core.util.ActivityIntentKt")
++        org.mockito.Mockito.mockStatic(utilClass).use { mockedUtil ->
++            mockedUtil.`when`<android.content.Intent> {
++                getActivityIntent(eq(componentName), any())
++            }.thenReturn(mockIntent)
++
++            viewModel.launchWithBackend(ActivityLaunchBackend.JVM)
++
++            val captor = argumentCaptor<LaunchRequest>()
++            verify(launchActivityUseCase).invoke(captor.capture())
++            assertEquals(ActivityLaunchBackend.JVM, captor.firstValue.backend)
++            assertEquals(mockIntent, captor.firstValue.intent)
++        }
++    }
++
+     @Test
+     fun `should create shortcut`() {
+         val mockIntent = mock<android.content.Intent>()
+diff --git a/ADVANCED_EXECUTORS.md b/ADVANCED_EXECUTORS.md
+new file mode 100644
+index 0000000..b42e133
+--- /dev/null
++++ b/ADVANCED_EXECUTORS.md
+@@ -0,0 +1,53 @@
++# Advanced executors and APK audit
++
++This fork adds four explicit activity-launch backends:
++
++- `DEFAULT` — normal `Context.startActivity()` behavior.
++- `SHIZUKU_PLUS` — sends an argument vector to `/system/bin/am` through the user-approved
++  Shizuku process. No `sh -c`, hidden API bypass, assistant hijacking, or automatic permission
++  granting is used.
++- `JVM` — starts the same non-privileged command through `Runtime.exec()`.
++- `JNI_NATIVE` — starts it through Android's native process bridge exposed by `ProcessBuilder`;
++  no third-party or device-specific `.so` is loaded.
++
++The JVM and JNI/native backends do not elevate privileges. They are useful for compatibility and
++diagnostic testing; private or non-exported activity access requires Shizuku/Sui/root and the
++corresponding user authorization.
++
++## APK / developer audit
++
++The activity details overflow menu opens an APK audit for the selected package. The audit reports:
++
++- `*#*#...#*#*` and `android_secret_code://...` candidates;
++- explicit `debuggable` and `testOnly` package flags plus static debug/developer markers;
++- native library inventory;
++- password/secret/API-key-like assignments as redacted candidates with a SHA-256 digest.
++
++Sensitive literal values are never displayed by the app. The detector is heuristic and does not
++prove that a code is active or that a marker is a usable credential. It also does not brute-force,
++test passwords, or invoke discovered secret codes.
++
++## Supplied system binaries
++
++The supplied binaries are intentionally not bundled:
++
++- `toybox` is not bundled or executed by the current build. A future diagnostic command may use
++  the device's own `/system/bin/toybox` only through an explicit allow-list; the uploaded AArch64
++  build is device/release dependent.
++- `minadbd` is a recovery-only ADB daemon and depends on recovery/system libraries and sockets.
++- `sec_debug_softdog.ko` is a Samsung kernel module with device-specific `vermagic`, a
++  `sec_debug_stacktrace` dependency, and kernel-level watchdog behavior. It cannot be loaded by
++  a normal app or by Shizuku without root and an exact matching kernel.
++- The previously supplied host libraries and Samsung security libraries are not valid APK JNI
++  dependencies for this project.
++
++The input-artifact review was:
++
++| Artifact | Assessment |
++| --- | --- |
++| `libadbd_auth.so`, `libadbd_fs.so`, `minadbd` | Recovery/ADB internals; require recovery sockets and libraries. |
++| `libknoxchanger_r.so` | Samsung KAP/UCS/AFW and partition operations; device-specific and brick-risky. |
++| `sec_debug_softdog.ko` | Exact Samsung kernel module; not loadable by an ordinary app. |
++| `toybox` | Device/release-specific multicall binary; use only the device copy behind an allow-list. |
++| `libconscrypt_openjdk_jni.so`, `libc++.so`, `libext2_uuid-host.so`, `libhidl-gen-utils.so` | Host/build-tool libraries, not Android ARM app dependencies. |
++| `ld-android.so` | Android dynamic loader, not an application library. |
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt b/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt
+new file mode 100644
+index 0000000..88fe476
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt
+@@ -0,0 +1,66 @@
++package de.szalkowski.activitylauncher.core.util
++
++import android.content.Intent
++import android.net.Uri
++import android.os.Bundle
++
++/**
++ * Builds an argument vector for Android's activity manager without going through a shell.
++ * Keeping every value as a separate argument avoids command-injection bugs in executor backends.
++ */
++object ActivityCommandBuilder {
++    private const val ACTIVITY_MANAGER = "/system/bin/am"
++
++    fun buildStartCommand(intent: Intent): List<String> {
++        val component = requireNotNull(intent.component) { "An explicit component is required" }
++        val command = mutableListOf(ACTIVITY_MANAGER, "start")
++
++        intent.action?.takeIf { it.isNotBlank() }?.let {
++            command += listOf("-a", it)
++        }
++        intent.data?.let { data: Uri ->
++            command += listOf("-d", data.toString())
++        }
++        intent.type?.takeIf { it.isNotBlank() }?.let {
++            command += listOf("-t", it)
++        }
++        intent.categories
++            ?.asSequence()
++            ?.sorted()
++            ?.forEach { category -> command += listOf("-c", category) }
++
++        command += listOf("-n", component.flattenToString())
++        appendExtras(command, intent.extras)
++        return command
++    }
++
++    private fun appendExtras(command: MutableList<String>, extras: Bundle?) {
++        extras?.keySet()
++            ?.asSequence()
++            ?.sorted()
++            ?.forEach { key ->
++                val value = extras.get(key) ?: return@forEach
++                when (value) {
++                    is String -> command += listOf("--es", key, value)
++                    is Int -> command += listOf("--ei", key, value.toString())
++                    is Long -> command += listOf("--el", key, value.toString())
++                    is Boolean -> command += listOf("--ez", key, value.toString())
++                    is Float -> command += listOf("--ef", key, value.toString())
++                    is Double -> command += listOf("--ed", key, value.toString())
++                    is Uri -> command += listOf("--eu", key, value.toString())
++                    is Array<*> -> {
++                        val strings = value.filterIsInstance<String>()
++                        if (strings.size == value.size) {
++                            command += listOf("--esa", key, strings.joinToString(","))
++                        }
++                    }
++                    is ArrayList<*> -> {
++                        val strings = value.filterIsInstance<String>()
++                        if (strings.size == value.size) {
++                            command += listOf("--esa", key, strings.joinToString(","))
++                        }
++                    }
++                }
++            }
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/audit/AuditDetector.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/audit/AuditDetector.kt
+new file mode 100644
+index 0000000..87f0d92
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/audit/AuditDetector.kt
+@@ -0,0 +1,118 @@
++package de.szalkowski.activitylauncher.data.audit
++
++import de.szalkowski.activitylauncher.domain.audit.AuditFinding
++import de.szalkowski.activitylauncher.domain.audit.AuditFindingType
++import de.szalkowski.activitylauncher.domain.audit.AuditSeverity
++import java.security.MessageDigest
++
++/** Pure detector used by the APK scanner and unit tests. It never returns sensitive literals. */
++object AuditDetector {
++    private val secretCodePattern = Regex("""(?i)\*#\*#([0-9]{2,20})#\*#\*""")
++    private val secretCodeUriPattern = Regex("""(?i)android_secret_code://([0-9]{2,20})""")
++    private val sensitiveAssignmentPattern = Regex(
++        """(?i)\b(password|passwd|passcode|developer[_-]?password|secret(?:[_-]?key)?|api[_-]?key)\b\s*(?:=>|=|:)\s*[\"']?([A-Za-z0-9@#%_+./:-]{4,96})""",
++    )
++    private val sensitiveKeyPattern = Regex(
++        """(?i)\b(password|passwd|passcode|developer[_-]?password|secret[_-]?key|api[_-]?key)\b""",
++    )
++    private val debugMarkers = listOf(
++        "debuggable",
++        "debug",
++        "developer",
++        "engineering",
++        "staging",
++        "internal",
++        "test_only",
++        "testonly",
++        "strictmode",
++        "verbose",
++        "trace",
++        "dump",
++    )
++
++    fun detect(text: String, source: String): List<AuditFinding> {
++        val findings = linkedMapOf<String, AuditFinding>()
++
++        fun add(finding: AuditFinding) {
++            val key = "${finding.type}|${finding.value}|${finding.source}"
++            findings.putIfAbsent(key, finding)
++        }
++
++        secretCodePattern.findAll(text).forEach { match ->
++            val code = match.groupValues[1]
++            add(
++                AuditFinding(
++                    type = AuditFindingType.SECRET_CODE,
++                    severity = AuditSeverity.MEDIUM,
++                    value = "*#*#$code#*#*",
++                    source = source,
++                    details = "Znaleziony wzorzec kodu serwisowego; wymaga weryfikacji odbiornika.",
++                ),
++            )
++        }
++        secretCodeUriPattern.findAll(text).forEach { match ->
++            val code = match.groupValues[1]
++            add(
++                AuditFinding(
++                    type = AuditFindingType.SECRET_CODE,
++                    severity = AuditSeverity.MEDIUM,
++                    value = "android_secret_code://$code",
++                    source = source,
++                    details = "Znaleziony URI secret-code; wymaga weryfikacji odbiornika.",
++                ),
++            )
++        }
++
++        sensitiveAssignmentPattern.findAll(text).forEach { match ->
++            val key = match.groupValues[1]
++            val candidate = match.groupValues[2]
++            add(
++                AuditFinding(
++                    type = AuditFindingType.SENSITIVE_LITERAL,
++                    severity = AuditSeverity.HIGH,
++                    value = key,
++                    source = source,
++                    details = "Wartość ukryta; SHA-256=${sha256(candidate)}",
++                ),
++            )
++        }
++        sensitiveKeyPattern.findAll(text).forEach { match ->
++            val key = match.groupValues[1]
++            add(
++                AuditFinding(
++                    type = AuditFindingType.SENSITIVE_LITERAL,
++                    severity = AuditSeverity.LOW,
++                    value = key,
++                    source = source,
++                    details = "Znaleziono nazwę pola wrażliwego; brak ujawniania wartości.",
++                ),
++            )
++        }
++
++        val lowerText = text.lowercase()
++        debugMarkers.forEach { marker ->
++            if (lowerText.contains(marker)) {
++                add(
++                    AuditFinding(
++                        type = AuditFindingType.DEBUG_MARKER,
++                        severity = if (marker == "debuggable" || marker == "engineering") {
++                            AuditSeverity.MEDIUM
++                        } else {
++                            AuditSeverity.LOW
++                        },
++                        value = marker,
++                        source = source,
++                        details = "Marker diagnostyczny; nie potwierdza samodzielnie trybu debug.",
++                    ),
++                )
++            }
++        }
++
++        return findings.values.toList()
++    }
++
++    private fun sha256(value: String): String {
++        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
++        return digest.joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt
+new file mode 100644
+index 0000000..5c0a5e0
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt
+@@ -0,0 +1,141 @@
++package de.szalkowski.activitylauncher.data.audit
++
++import android.content.Context
++import android.content.pm.ApplicationInfo
++import android.content.pm.PackageManager
++import androidx.core.content.pm.PackageInfoCompat
++import dagger.hilt.android.qualifiers.ApplicationContext
++import de.szalkowski.activitylauncher.domain.audit.AuditFinding
++import de.szalkowski.activitylauncher.domain.audit.AuditFindingType
++import de.szalkowski.activitylauncher.domain.audit.AuditSeverity
++import de.szalkowski.activitylauncher.domain.audit.PackageAuditResult
++import java.io.ByteArrayOutputStream
++import java.io.File
++import java.util.zip.ZipFile
++import javax.inject.Inject
++
++class PackageAuditScanner @Inject constructor(
++    @ApplicationContext private val context: Context,
++) {
++    private val packageManager: PackageManager = context.packageManager
++
++    fun scan(packageName: String): PackageAuditResult {
++        @Suppress("DEPRECATION")
++        val packageInfo = packageManager.getPackageInfo(packageName, PackageManager.GET_ACTIVITIES)
++        val applicationInfo = packageInfo.applicationInfo
++            ?: throw PackageManager.NameNotFoundException(packageName)
++        val apkFile = applicationInfo.sourceDir?.let(::File)
++        val findings = linkedMapOf<String, AuditFinding>()
++        var scanTruncated = false
++
++        fun add(finding: AuditFinding) {
++            val key = "${finding.type}|${finding.value}|${finding.source}"
++            findings.putIfAbsent(key, finding)
++        }
++
++        val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
++        val testOnly = applicationInfo.flags and ApplicationInfo.FLAG_TEST_ONLY != 0
++        if (debuggable) {
++            add(
++                AuditFinding(
++                    type = AuditFindingType.DEBUG_MARKER,
++                    severity = AuditSeverity.HIGH,
++                    value = "android:debuggable=true",
++                    source = "ApplicationInfo.flags",
++                    details = "Flaga aplikacji jest ustawiona w zainstalowanym pakiecie.",
++                ),
++            )
++        }
++        if (testOnly) {
++            add(
++                AuditFinding(
++                    type = AuditFindingType.DEBUG_MARKER,
++                    severity = AuditSeverity.MEDIUM,
++                    value = "android:testOnly=true",
++                    source = "ApplicationInfo.flags",
++                    details = "Pakiet został oznaczony jako testowy.",
++                ),
++            )
++        }
++
++        val nativeLibraries = mutableListOf<String>()
++        apkFile?.takeIf { it.isFile }?.let { file ->
++            runCatching {
++                ZipFile(file).use { zip ->
++                    var scannedBytes = 0L
++                    zip.entries().asSequence().forEach { entry ->
++                        if (entry.name.startsWith("lib/") && entry.name.endsWith(".so")) {
++                            nativeLibraries += entry.name
++                        }
++                        if (!isScannable(entry.name) || findings.size >= MAX_FINDINGS) return@forEach
++                        val entrySize = entry.size.takeIf { it >= 0 } ?: MAX_ENTRY_BYTES.toLong()
++                        if (entrySize > MAX_ENTRY_BYTES || scannedBytes >= MAX_TOTAL_BYTES) {
++                            scanTruncated = true
++                            return@forEach
++                        }
++                        val bytes = readEntry(zip, entry, MAX_ENTRY_BYTES)
++                        scannedBytes += bytes.size
++                        val texts = listOf(
++                            String(bytes, Charsets.ISO_8859_1),
++                            String(bytes, Charsets.UTF_8),
++                            String(bytes, Charsets.UTF_16LE),
++                        )
++                        texts.flatMap { text -> AuditDetector.detect(text, entry.name) }
++                            .take(MAX_FINDINGS - findings.size)
++                            .forEach(::add)
++                    }
++                }
++            }.onFailure {
++                scanTruncated = true
++            }
++        }
++
++        val activities = packageInfo.activities.orEmpty()
++        return PackageAuditResult(
++            packageName = packageName,
++            label = packageManager.getApplicationLabel(applicationInfo).toString(),
++            versionName = packageInfo.versionName,
++            versionCode = PackageInfoCompat.getLongVersionCode(packageInfo),
++            apkPath = applicationInfo.sourceDir,
++            debuggable = debuggable,
++            testOnly = testOnly,
++            activityCount = activities.size,
++            exportedActivityCount = activities.count { it.exported },
++            nativeLibraries = nativeLibraries.distinct().sorted(),
++            findings = findings.values.take(MAX_FINDINGS).toList(),
++            scanTruncated = scanTruncated || findings.size >= MAX_FINDINGS,
++        )
++    }
++
++    private fun isScannable(name: String): Boolean {
++        return name.endsWith(".dex") ||
++            name.endsWith(".xml") ||
++            name.endsWith(".json") ||
++            name.endsWith(".txt") ||
++            name.endsWith(".properties") ||
++            name.startsWith("assets/") ||
++            name.startsWith("res/raw/") ||
++            name.startsWith("META-INF/")
++    }
++
++    private fun readEntry(zip: ZipFile, entry: java.util.zip.ZipEntry, limit: Int): ByteArray {
++        val output = ByteArrayOutputStream(minOf(entry.size.takeIf { it >= 0 }?.toInt() ?: limit, limit))
++        zip.getInputStream(entry).use { input ->
++            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
++            var remaining = limit
++            while (remaining > 0) {
++                val count = input.read(buffer, 0, minOf(buffer.size, remaining))
++                if (count <= 0) break
++                output.write(buffer, 0, count)
++                remaining -= count
++            }
++        }
++        return output.toByteArray()
++    }
++
++    private companion object {
++        const val MAX_ENTRY_BYTES = 8 * 1024 * 1024
++        const val MAX_TOTAL_BYTES = 64L * 1024 * 1024
++        const val MAX_FINDINGS = 256
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/JvmActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/JvmActivityLaunchExecutor.kt
+new file mode 100644
+index 0000000..d501095
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/JvmActivityLaunchExecutor.kt
+@@ -0,0 +1,35 @@
++package de.szalkowski.activitylauncher.data.launcher
++
++import android.content.Intent
++import de.szalkowski.activitylauncher.core.util.ActivityCommandBuilder
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchExecutor
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
++import javax.inject.Inject
++
++/**
++ * Starts the platform activity-manager command through the Java runtime.
++ * This backend has the application's UID and therefore does not bypass Android permissions.
++ */
++class JvmActivityLaunchExecutor @Inject constructor() : ActivityLaunchExecutor {
++    override val backend: ActivityLaunchBackend = ActivityLaunchBackend.JVM
++
++    override fun isAvailable(): Boolean = true
++
++    override fun launch(intent: Intent): ActivityLaunchResult {
++        return runCatching {
++            Runtime.getRuntime().exec(ActivityCommandBuilder.buildStartCommand(intent).toTypedArray())
++        }.fold(
++            onSuccess = { process ->
++                process.outputStream.close()
++                ActivityLaunchResult(started = true)
++            },
++            onFailure = { error ->
++                ActivityLaunchResult(
++                    started = false,
++                    message = error.message ?: error::class.java.simpleName,
++                )
++            },
++        )
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt
+new file mode 100644
+index 0000000..f5eb7ab
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt
+@@ -0,0 +1,38 @@
++package de.szalkowski.activitylauncher.data.launcher
++
++import android.content.Intent
++import de.szalkowski.activitylauncher.core.util.ActivityCommandBuilder
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchExecutor
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
++import javax.inject.Inject
++
++/**
++ * Uses Android's native process bridge exposed by ProcessBuilder.
++ * This is not a bundled JNI library: it does not elevate privileges, and Shizuku is deliberately
++ * kept separate.
++ */
++class NativeActivityLaunchExecutor @Inject constructor() : ActivityLaunchExecutor {
++    override val backend: ActivityLaunchBackend = ActivityLaunchBackend.JNI_NATIVE
++
++    override fun isAvailable(): Boolean = true
++
++    override fun launch(intent: Intent): ActivityLaunchResult {
++        return runCatching {
++            ProcessBuilder(ActivityCommandBuilder.buildStartCommand(intent))
++                .redirectErrorStream(true)
++                .start()
++        }.fold(
++            onSuccess = { process ->
++                process.outputStream.close()
++                ActivityLaunchResult(started = true)
++            },
++            onFailure = { error ->
++                ActivityLaunchResult(
++                    started = false,
++                    message = error.message ?: error::class.java.simpleName,
++                )
++            },
++        )
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
+new file mode 100644
+index 0000000..97d449c
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
+@@ -0,0 +1,121 @@
++package de.szalkowski.activitylauncher.data.launcher
++
++import android.content.Intent
++import android.content.pm.PackageManager
++import android.os.Build
++import de.szalkowski.activitylauncher.core.util.ActivityCommandBuilder
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchExecutor
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
++import rikka.shizuku.Shizuku
++import java.util.concurrent.atomic.AtomicBoolean
++import javax.inject.Inject
++
++enum class ShizukuState {
++    UNSUPPORTED,
++    STOPPED,
++    DENIED,
++    GRANTED,
++}
++
++/**
++ * Shizuku-backed activity launcher. It sends an argument vector to `am` directly and never
++ * invokes `sh -c`, so component names and extras cannot become shell syntax.
++ */
++class ShizukuActivityLaunchExecutor @Inject constructor() : ActivityLaunchExecutor {
++    override val backend: ActivityLaunchBackend = ActivityLaunchBackend.SHIZUKU_PLUS
++
++    override fun isAvailable(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
++
++    fun state(): ShizukuState {
++        if (!isAvailable()) return ShizukuState.UNSUPPORTED
++        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
++            return ShizukuState.STOPPED
++        }
++        return if (hasPermission()) ShizukuState.GRANTED else ShizukuState.DENIED
++    }
++
++    fun hasPermission(): Boolean {
++        if (!isAvailable() || !runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
++            return false
++        }
++        return runCatching {
++            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
++        }.getOrDefault(false)
++    }
++
++    fun requestPermission(callback: (Boolean) -> Unit) {
++        if (!isAvailable() || !runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
++            callback(false)
++            return
++        }
++        if (hasPermission()) {
++            callback(true)
++            return
++        }
++
++        val completed = AtomicBoolean(false)
++        val listener = object : Shizuku.OnRequestPermissionResultListener {
++            override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
++                if (requestCode != REQUEST_CODE || !completed.compareAndSet(false, true)) return
++                Shizuku.removeRequestPermissionResultListener(this)
++                callback(grantResult == PackageManager.PERMISSION_GRANTED)
++            }
++        }
++
++        try {
++            Shizuku.addRequestPermissionResultListener(listener)
++            Shizuku.requestPermission(REQUEST_CODE)
++        } catch (error: Throwable) {
++            Shizuku.removeRequestPermissionResultListener(listener)
++            if (completed.compareAndSet(false, true)) callback(false)
++        }
++    }
++
++    override fun launch(intent: Intent): ActivityLaunchResult {
++        if (!isAvailable()) {
++            return ActivityLaunchResult(false, "Shizuku wymaga Androida 6.0 lub nowszego")
++        }
++        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
++            return ActivityLaunchResult(false, "Usługa Shizuku nie działa")
++        }
++        if (!hasPermission()) {
++            return ActivityLaunchResult(false, "Brak zgody Shizuku")
++        }
++
++        return runCatching {
++            val command = ActivityCommandBuilder.buildStartCommand(intent)
++            val process = newProcess(command)
++            process.outputStream.close()
++            Thread {
++                runCatching {
++                    process.waitFor()
++                }
++            }.apply {
++                name = "activitylauncher-shizuku-process"
++                isDaemon = true
++                start()
++            }
++            ActivityLaunchResult(started = true)
++        }.getOrElse { error ->
++            ActivityLaunchResult(
++                started = false,
++                message = error.message ?: error::class.java.simpleName,
++            )
++        }
++    }
++
++    private fun newProcess(command: List<String>): Process {
++        val method = Shizuku::class.java.getMethod(
++            "newProcess",
++            Array<String>::class.java,
++            Array<String>::class.java,
++            String::class.java,
++        )
++        return method.invoke(null, command.toTypedArray(), null, null) as Process
++    }
++
++    companion object {
++        private const val REQUEST_CODE = 2407
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt
+new file mode 100644
+index 0000000..75069ad
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt
+@@ -0,0 +1,37 @@
++package de.szalkowski.activitylauncher.domain.audit
++
++enum class AuditFindingType {
++    SECRET_CODE,
++    DEBUG_MARKER,
++    SENSITIVE_LITERAL,
++}
++
++enum class AuditSeverity {
++    INFO,
++    LOW,
++    MEDIUM,
++    HIGH,
++}
++
++data class AuditFinding(
++    val type: AuditFindingType,
++    val severity: AuditSeverity,
++    val value: String,
++    val source: String,
++    val details: String? = null,
++)
++
++data class PackageAuditResult(
++    val packageName: String,
++    val label: String,
++    val versionName: String?,
++    val versionCode: Long,
++    val apkPath: String?,
++    val debuggable: Boolean,
++    val testOnly: Boolean,
++    val activityCount: Int,
++    val exportedActivityCount: Int,
++    val nativeLibraries: List<String>,
++    val findings: List<AuditFinding>,
++    val scanTruncated: Boolean,
++)
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/ActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/ActivityLaunchExecutor.kt
+new file mode 100644
+index 0000000..ad33d5c
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/ActivityLaunchExecutor.kt
+@@ -0,0 +1,17 @@
++package de.szalkowski.activitylauncher.domain.launcher
++
++import android.content.Intent
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
++
++interface ActivityLaunchExecutor {
++    val backend: ActivityLaunchBackend
++
++    fun isAvailable(): Boolean
++
++    fun launch(intent: Intent): ActivityLaunchResult
++}
++
++data class ActivityLaunchResult(
++    val started: Boolean,
++    val message: String? = null,
++)
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt
+new file mode 100644
+index 0000000..a446141
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt
+@@ -0,0 +1,15 @@
++package de.szalkowski.activitylauncher.domain.model
++
++/**
++ * Backend used to start an activity.
++ *
++ * JVM and JNI_NATIVE do not grant additional privileges. They are explicit process-launch
++ * backends for diagnostics and compatibility testing. SHIZUKU_PLUS requires a user-approved
++ * Shizuku grant and is the only backend intended to cross the normal activity-export boundary.
++ */
++enum class ActivityLaunchBackend {
++    DEFAULT,
++    SHIZUKU_PLUS,
++    JVM,
++    JNI_NATIVE,
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/AuditActivity.kt b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/AuditActivity.kt
+new file mode 100644
+index 0000000..0c5c8b1
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/AuditActivity.kt
+@@ -0,0 +1,93 @@
++package de.szalkowski.activitylauncher.entrypoint
++
++import android.content.ClipData
++import android.content.ClipboardManager
++import android.content.Context
++import android.os.Bundle
++import android.view.MenuItem
++import android.widget.Toast
++import androidx.appcompat.app.AppCompatActivity
++import androidx.core.view.isVisible
++import androidx.lifecycle.lifecycleScope
++import dagger.hilt.android.AndroidEntryPoint
++import de.szalkowski.activitylauncher.R
++import de.szalkowski.activitylauncher.data.audit.PackageAuditScanner
++import de.szalkowski.activitylauncher.databinding.ActivityAuditBinding
++import de.szalkowski.activitylauncher.presentation.audit.PackageAuditFormatter
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import javax.inject.Inject
++
++@AndroidEntryPoint
++class AuditActivity : AppCompatActivity() {
++    @Inject
++    lateinit var packageAuditScanner: PackageAuditScanner
++
++    private lateinit var binding: ActivityAuditBinding
++    private val packageName: String by lazy {
++        intent.getStringExtra(EXTRA_PACKAGE_NAME).orEmpty()
++    }
++
++    override fun onCreate(savedInstanceState: Bundle?) {
++        super.onCreate(savedInstanceState)
++
++        binding = ActivityAuditBinding.inflate(layoutInflater)
++        setContentView(binding.root)
++        setSupportActionBar(binding.toolbar)
++        supportActionBar?.setDisplayHomeAsUpEnabled(true)
++
++        binding.btRunAudit.setOnClickListener { runAudit() }
++        binding.btCopyReport.setOnClickListener { copyReport() }
++
++        if (packageName.isBlank()) {
++            binding.tvAuditStatus.setText(R.string.error_invalid_activity_link)
++            binding.btRunAudit.isEnabled = false
++        } else {
++            runAudit()
++        }
++    }
++
++    override fun onOptionsItemSelected(item: MenuItem): Boolean {
++        return if (item.itemId == android.R.id.home) {
++            finish()
++            true
++        } else {
++            super.onOptionsItemSelected(item)
++        }
++    }
++
++    private fun runAudit() {
++        binding.btRunAudit.isEnabled = false
++        binding.pbAudit.isVisible = true
++        binding.tvAuditStatus.text = getString(R.string.audit_running, packageName)
++
++        lifecycleScope.launch {
++            val result = runCatching {
++                withContext(Dispatchers.IO) { packageAuditScanner.scan(packageName) }
++            }
++            result.onSuccess { audit ->
++                binding.tvAuditStatus.text = getString(R.string.audit_complete, audit.packageName)
++                binding.tvAuditReport.text = PackageAuditFormatter.format(audit)
++            }.onFailure { error ->
++                binding.tvAuditStatus.text = getString(
++                    R.string.audit_failed,
++                    error.message ?: error::class.java.simpleName,
++                )
++                binding.tvAuditReport.text = ""
++            }
++            binding.pbAudit.isVisible = false
++            binding.btRunAudit.isEnabled = true
++        }
++    }
++
++    private fun copyReport() {
++        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
++        clipboard.setPrimaryClip(ClipData.newPlainText("Activity Launcher audit", binding.tvAuditReport.text))
++        Toast.makeText(this, R.string.audit_copied, Toast.LENGTH_SHORT).show()
++    }
++
++    companion object {
++        const val EXTRA_PACKAGE_NAME = "packageName"
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/audit/PackageAuditFormatter.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/audit/PackageAuditFormatter.kt
+new file mode 100644
+index 0000000..f8defea
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/audit/PackageAuditFormatter.kt
+@@ -0,0 +1,54 @@
++package de.szalkowski.activitylauncher.presentation.audit
++
++import de.szalkowski.activitylauncher.domain.audit.AuditFindingType
++import de.szalkowski.activitylauncher.domain.audit.PackageAuditResult
++
++object PackageAuditFormatter {
++    fun format(result: PackageAuditResult): String = buildString {
++        appendLine("Pakiet: ${result.packageName}")
++        appendLine("Nazwa: ${result.label}")
++        appendLine("Wersja: ${result.versionName ?: "?"} (${result.versionCode})")
++        appendLine("APK: ${result.apkPath ?: "?"}")
++        appendLine("Debuggable: ${result.debuggable}")
++        appendLine("Test-only: ${result.testOnly}")
++        appendLine("Aktywności: ${result.activityCount}; exported: ${result.exportedActivityCount}")
++        appendLine()
++
++        appendLine("== SECRET CODES ==")
++        appendFindings(result, AuditFindingType.SECRET_CODE)
++        appendLine()
++
++        appendLine("== DEBUG / DEVELOPER MARKERS ==")
++        appendFindings(result, AuditFindingType.DEBUG_MARKER)
++        appendLine()
++
++        appendLine("== SENSITIVE LITERAL CANDIDATES ==")
++        appendFindings(result, AuditFindingType.SENSITIVE_LITERAL)
++        appendLine("Wartości wrażliwe są celowo redagowane; wynik wymaga ręcznej weryfikacji.")
++        appendLine()
++
++        appendLine("== NATIVE LIBRARIES ==")
++        if (result.nativeLibraries.isEmpty()) {
++            appendLine("brak")
++        } else {
++            result.nativeLibraries.forEach { appendLine(it) }
++        }
++        if (result.scanTruncated) {
++            appendLine()
++            appendLine("Uwaga: skan został ograniczony limitem rozmiaru/liczby wyników.")
++        }
++    }
++
++    private fun StringBuilder.appendFindings(result: PackageAuditResult, type: AuditFindingType) {
++        val findings = result.findings.filter { it.type == type }
++        if (findings.isEmpty()) {
++            appendLine("brak")
++            return
++        }
++        findings.forEach { finding ->
++            append("[${finding.severity}] ${finding.value} @ ${finding.source}")
++            finding.details?.let { append(" — $it") }
++            appendLine()
++        }
++    }
++}
+diff --git a/app/src/main/res/layout/activity_audit.xml b/app/src/main/res/layout/activity_audit.xml
+new file mode 100644
+index 0000000..910bf27
+--- /dev/null
++++ b/app/src/main/res/layout/activity_audit.xml
+@@ -0,0 +1,73 @@
++<?xml version="1.0" encoding="utf-8"?>
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    xmlns:app="http://schemas.android.com/apk/res-auto"
++    android:layout_width="match_parent"
++    android:layout_height="match_parent"
++    android:orientation="vertical">
++
++    <com.google.android.material.appbar.MaterialToolbar
++        android:id="@+id/toolbar"
++        android:layout_width="match_parent"
++        android:layout_height="wrap_content"
++        android:title="@string/title_activity_audit" />
++
++    <ScrollView
++        android:layout_width="match_parent"
++        android:layout_height="0dp"
++        android:layout_weight="1"
++        android:fillViewport="true">
++
++        <LinearLayout
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:orientation="vertical"
++            android:padding="16dp">
++
++            <TextView
++                android:id="@+id/tvAuditStatus"
++                android:layout_width="match_parent"
++                android:layout_height="wrap_content"
++                android:textAppearance="?attr/textAppearanceBodyMedium" />
++
++            <ProgressBar
++                android:id="@+id/pbAudit"
++                style="?android:attr/progressBarStyleSmall"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_gravity="center_horizontal"
++                android:layout_marginTop="12dp" />
++
++            <LinearLayout
++                android:layout_width="match_parent"
++                android:layout_height="wrap_content"
++                android:layout_marginTop="8dp"
++                android:orientation="horizontal">
++
++                <com.google.android.material.button.MaterialButton
++                    android:id="@+id/btRunAudit"
++                    android:layout_width="0dp"
++                    android:layout_height="wrap_content"
++                    android:layout_weight="1"
++                    android:text="@string/action_run_audit" />
++
++                <com.google.android.material.button.MaterialButton
++                    android:id="@+id/btCopyReport"
++                    style="?attr/borderlessButtonStyle"
++                    android:layout_width="wrap_content"
++                    android:layout_height="wrap_content"
++                    android:text="@string/action_copy_report" />
++            </LinearLayout>
++
++            <TextView
++                android:id="@+id/tvAuditReport"
++                android:layout_width="match_parent"
++                android:layout_height="wrap_content"
++                android:layout_marginTop="12dp"
++                android:fontFamily="monospace"
++                android:textIsSelectable="true"
++                android:textSize="12sp"
++                android:typeface="monospace"
++                android:text="@string/audit_not_run" />
++        </LinearLayout>
++    </ScrollView>
++</LinearLayout>
+diff --git a/app/src/main/res/values-v23/bools.xml b/app/src/main/res/values-v23/bools.xml
+new file mode 100644
+index 0000000..63e4e9e
+--- /dev/null
++++ b/app/src/main/res/values-v23/bools.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <bool name="shizuku_provider_enabled">true</bool>
++</resources>
+diff --git a/app/src/main/res/values/bools.xml b/app/src/main/res/values/bools.xml
+new file mode 100644
+index 0000000..bae41bc
+--- /dev/null
++++ b/app/src/main/res/values/bools.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <bool name="shizuku_provider_enabled">false</bool>
++</resources>
+diff --git a/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt
+new file mode 100644
+index 0000000..e7e2020
+--- /dev/null
++++ b/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt
+@@ -0,0 +1,28 @@
++package de.szalkowski.activitylauncher.core.util
++
++import android.content.ComponentName
++import android.content.Intent
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class ActivityCommandBuilderTest {
++    @Test
++    fun `builds an argument vector and preserves values with shell syntax`() {
++        val intent = Intent("com.example.ACTION").apply {
++            component = ComponentName("com.example.app", "com.example.app.HiddenActivity")
++            putExtra("payload", "$(touch /data/local/tmp/should-not-run)")
++            putExtra("enabled", true)
++        }
++
++        val command = ActivityCommandBuilder.buildStartCommand(intent)
++
++        assertEquals("/system/bin/am", command.first())
++        assertTrue(command.contains("$(touch /data/local/tmp/should-not-run)"))
++        assertTrue(command.contains("--es"))
++        assertTrue(command.contains("--ez"))
++        assertFalse(command.contains("sh"))
++        assertFalse(command.contains("-c"))
++    }
++}
+diff --git a/app/src/test/java/de/szalkowski/activitylauncher/data/audit/AuditDetectorTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/data/audit/AuditDetectorTest.kt
+new file mode 100644
+index 0000000..208368e
+--- /dev/null
++++ b/app/src/test/java/de/szalkowski/activitylauncher/data/audit/AuditDetectorTest.kt
+@@ -0,0 +1,48 @@
++package de.szalkowski.activitylauncher.data.audit
++
++import de.szalkowski.activitylauncher.domain.audit.AuditFindingType
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class AuditDetectorTest {
++    @Test
++    fun `detects dialer and android secret code formats`() {
++        val findings = AuditDetector.detect(
++            "dial *#*#4636#*#* and android_secret_code://4268",
++            "classes.dex",
++        )
++
++        val values = findings.filter { it.type == AuditFindingType.SECRET_CODE }.map { it.value }
++        assertEquals(
++            listOf("*#*#4636#*#*", "android_secret_code://4268"),
++            values,
++        )
++    }
++
++    @Test
++    fun `redacts sensitive values and keeps only a digest`() {
++        val findings = AuditDetector.detect(
++            "developer_password=NotForDisplay123; password='AnotherSecret456'",
++            "assets/config.txt",
++        )
++
++        val sensitive = findings.filter { it.type == AuditFindingType.SENSITIVE_LITERAL }
++        assertTrue(sensitive.any { it.value == "developer_password" })
++        assertTrue(sensitive.any { it.value == "password" })
++        assertTrue(sensitive.all { it.details?.contains("[REDACTED]") == false })
++        assertTrue(sensitive.all { it.details?.contains("SHA-256=") == true })
++        assertFalse(sensitive.any { it.details?.contains("NotForDisplay123") == true })
++        assertFalse(sensitive.any { it.details?.contains("AnotherSecret456") == true })
++    }
++
++    @Test
++    fun `detects debug markers without treating them as proof of debuggable flag`() {
++        val findings = AuditDetector.detect("strictmode developer trace", "res/values.xml")
++        val markers = findings.filter { it.type == AuditFindingType.DEBUG_MARKER }.map { it.value }.toSet()
++
++        assertTrue(markers.containsAll(setOf("strictmode", "developer", "trace")))
++        assertTrue(findings.all { it.details?.contains("nie potwierdza") == true })
++    }
++}

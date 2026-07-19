@@ -1134,7 +1134,7 @@ index 0000000..a446141
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/AuditActivity.kt b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/AuditActivity.kt
 new file mode 100644
-index 0000000..0c5c8b1
+index 0000000..21b0465
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/AuditActivity.kt
 @@ -0,0 +1,93 @@
@@ -1165,7 +1165,7 @@ index 0000000..0c5c8b1
 +    lateinit var packageAuditScanner: PackageAuditScanner
 +
 +    private lateinit var binding: ActivityAuditBinding
-+    private val packageName: String by lazy {
++    private val targetPackageName: String by lazy {
 +        intent.getStringExtra(EXTRA_PACKAGE_NAME).orEmpty()
 +    }
 +
@@ -1180,7 +1180,7 @@ index 0000000..0c5c8b1
 +        binding.btRunAudit.setOnClickListener { runAudit() }
 +        binding.btCopyReport.setOnClickListener { copyReport() }
 +
-+        if (packageName.isBlank()) {
++        if (targetPackageName.isBlank()) {
 +            binding.tvAuditStatus.setText(R.string.error_invalid_activity_link)
 +            binding.btRunAudit.isEnabled = false
 +        } else {
@@ -1200,11 +1200,11 @@ index 0000000..0c5c8b1
 +    private fun runAudit() {
 +        binding.btRunAudit.isEnabled = false
 +        binding.pbAudit.isVisible = true
-+        binding.tvAuditStatus.text = getString(R.string.audit_running, packageName)
++        binding.tvAuditStatus.text = getString(R.string.audit_running, targetPackageName)
 +
 +        lifecycleScope.launch {
 +            val result = runCatching {
-+                withContext(Dispatchers.IO) { packageAuditScanner.scan(packageName) }
++                withContext(Dispatchers.IO) { packageAuditScanner.scan(targetPackageName) }
 +            }
 +            result.onSuccess { audit ->
 +                binding.tvAuditStatus.text = getString(R.string.audit_complete, audit.packageName)

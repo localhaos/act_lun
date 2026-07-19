@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 68a54b7..3cea6f8 100644
+index 68a54b7..c13a919 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -16,8 +16,8 @@ android {
@@ -13,7 +13,19 @@ index 68a54b7..3cea6f8 100644
  
          vectorDrawables.useSupportLibrary = true
          testInstrumentationRunner = "de.szalkowski.activitylauncher.HiltTestRunner"
-@@ -195,6 +195,8 @@ dependencies {
+@@ -93,6 +93,11 @@ android {
+         buildConfig = true
+         resValues = true
+     }
++    externalNativeBuild {
++        cmake {
++            path = file("src/main/cpp/CMakeLists.txt")
++        }
++    }
+     testOptions {
+         unitTests.isReturnDefaultValues = true
+     }
+@@ -195,6 +200,8 @@ dependencies {
      implementation("androidx.navigation:navigation-ui-ktx:2.7.7")
      implementation("androidx.preference:preference-ktx:1.2.1")
      implementation("com.google.dagger:hilt-android:2.59.2")
@@ -550,10 +562,10 @@ index 560ee48..afa8d1b 100644
          val mockIntent = mock<android.content.Intent>()
 diff --git a/ADVANCED_EXECUTORS.md b/ADVANCED_EXECUTORS.md
 new file mode 100644
-index 0000000..b42e133
+index 0000000..ff92eb0
 --- /dev/null
 +++ b/ADVANCED_EXECUTORS.md
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,55 @@
 +# Advanced executors and APK audit
 +
 +This fork adds four explicit activity-launch backends:
@@ -563,12 +575,14 @@ index 0000000..b42e133
 +  Shizuku process. No `sh -c`, hidden API bypass, assistant hijacking, or automatic permission
 +  granting is used.
 +- `JVM` — starts the same non-privileged command through `Runtime.exec()`.
-+- `JNI_NATIVE` — starts it through Android's native process bridge exposed by `ProcessBuilder`;
-+  no third-party or device-specific `.so` is loaded.
++- `JNI_NATIVE` — starts it through the bundled `libactivitylauncher_worker.so`; the JNI worker
++  accepts only `/system/bin/am` and an argument vector, then uses `fork`/`execv`. It does not
++  load third-party or device-specific `.so` files.
 +
 +The JVM and JNI/native backends do not elevate privileges. They are useful for compatibility and
 +diagnostic testing; private or non-exported activity access requires Shizuku/Sui/root and the
-+corresponding user authorization.
++corresponding user authorization. The JNI worker is built by the app's CMake/NDK configuration
++and is packaged per Android ABI.
 +
 +## APK / developer audit
 +
@@ -607,6 +621,111 @@ index 0000000..b42e133
 +| `toybox` | Device/release-specific multicall binary; use only the device copy behind an allow-list. |
 +| `libconscrypt_openjdk_jni.so`, `libc++.so`, `libext2_uuid-host.so`, `libhidl-gen-utils.so` | Host/build-tool libraries, not Android ARM app dependencies. |
 +| `ld-android.so` | Android dynamic loader, not an application library. |
+diff --git a/app/src/main/cpp/CMakeLists.txt b/app/src/main/cpp/CMakeLists.txt
+new file mode 100644
+index 0000000..92794e0
+--- /dev/null
++++ b/app/src/main/cpp/CMakeLists.txt
+@@ -0,0 +1,8 @@
++cmake_minimum_required(VERSION 3.22.1)
++
++project(activitylauncher_worker LANGUAGES CXX)
++
++add_library(activitylauncher_worker SHARED activitylauncher_worker.cpp)
++
++target_compile_features(activitylauncher_worker PRIVATE cxx_std_17)
++target_compile_options(activitylauncher_worker PRIVATE -Wall -Wextra)
+diff --git a/app/src/main/cpp/activitylauncher_worker.cpp b/app/src/main/cpp/activitylauncher_worker.cpp
+new file mode 100644
+index 0000000..519da59
+--- /dev/null
++++ b/app/src/main/cpp/activitylauncher_worker.cpp
+@@ -0,0 +1,85 @@
++#include <jni.h>
++
++#include <cerrno>
++#include <string>
++#include <unistd.h>
++#include <vector>
++
++namespace {
++constexpr const char* kActivityManager = "/system/bin/am";
++constexpr size_t kMaxArguments = 64;
++constexpr size_t kMaxArgumentLength = 4096;
++
++bool isSafeArgument(const char* value) {
++    if (value == nullptr) return false;
++    size_t length = 0;
++    while (value[length] != '\0') {
++        if (++length > kMaxArgumentLength) return false;
++    }
++    return true;
++}
++}  // namespace
++
++extern "C" JNIEXPORT jint JNICALL
++Java_de_szalkowski_activitylauncher_data_launcher_NativeWorker_nativeSpawn(
++    JNIEnv* env,
++    jclass,
++    jobjectArray command,
++) {
++    if (command == nullptr) return -EINVAL;
++
++    const jsize count = env->GetArrayLength(command);
++    if (count < 1 || static_cast<size_t>(count) > kMaxArguments) return -EINVAL;
++
++    std::vector<std::string> values;
++    values.reserve(static_cast<size_t>(count));
++    for (jsize index = 0; index < count; ++index) {
++        auto value = static_cast<jstring>(env->GetObjectArrayElement(command, index));
++        if (value == nullptr) return -EINVAL;
++        const char* utf = env->GetStringUTFChars(value, nullptr);
++        if (!isSafeArgument(utf)) {
++            env->ReleaseStringUTFChars(value, utf);
++            env->DeleteLocalRef(value);
++            return -EINVAL;
++        }
++        values.emplace_back(utf);
++        env->ReleaseStringUTFChars(value, utf);
++        env->DeleteLocalRef(value);
++    }
++
++    // The worker accepts only the fixed activity-manager start operation; it never invokes a shell.
++    if (values.front() != kActivityManager || values.size() < 2 || values[1] != "start") {
++        return -EPERM;
++    }
++
++    std::vector<char*> argv;
++    argv.reserve(values.size() + 1);
++    for (auto& value : values) argv.push_back(value.data());
++    argv.push_back(nullptr);
++
++    const pid_t child = fork();
++    if (child < 0) return -errno;
++    if (child == 0) {
++        execv(kActivityManager, argv.data());
++        _exit(127);
++    }
++    return static_cast<jint>(child);
++}
++
++extern "C" JNIEXPORT jint JNICALL
++Java_de_szalkowski_activitylauncher_data_launcher_NativeWorker_nativeAbiLevel(
++    JNIEnv*,
++    jclass,
++) {
++#if defined(__aarch64__)
++    return 1;
++#elif defined(__arm__)
++    return 2;
++#elif defined(__x86_64__)
++    return 3;
++#elif defined(__i386__)
++    return 4;
++#else
++    return 0;
++#endif
++}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt b/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt
 new file mode 100644
 index 0000000..88fe476
@@ -1051,10 +1170,10 @@ index 0000000..d501095
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..f5eb7ab
+index 0000000..14dc2ec
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,37 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Intent
@@ -1065,32 +1184,63 @@ index 0000000..f5eb7ab
 +import javax.inject.Inject
 +
 +/**
-+ * Uses Android's native process bridge exposed by ProcessBuilder.
-+ * This is not a bundled JNI library: it does not elevate privileges, and Shizuku is deliberately
-+ * kept separate.
++ * Uses the bundled JNI worker for a fixed, argument-vector-only `am` spawn.
++ * It does not elevate privileges; Shizuku is deliberately kept separate.
 + */
 +class NativeActivityLaunchExecutor @Inject constructor() : ActivityLaunchExecutor {
 +    override val backend: ActivityLaunchBackend = ActivityLaunchBackend.JNI_NATIVE
 +
-+    override fun isAvailable(): Boolean = true
++    override fun isAvailable(): Boolean = NativeWorker.isAvailable()
 +
 +    override fun launch(intent: Intent): ActivityLaunchResult {
++        if (!NativeWorker.isAvailable()) {
++            return ActivityLaunchResult(false, "Native worker is unavailable for this ABI")
++        }
 +        return runCatching {
-+            ProcessBuilder(ActivityCommandBuilder.buildStartCommand(intent))
-+                .redirectErrorStream(true)
-+                .start()
-+        }.fold(
-+            onSuccess = { process ->
-+                process.outputStream.close()
++            val pid = NativeWorker.spawn(ActivityCommandBuilder.buildStartCommand(intent))
++            if (pid != null) {
 +                ActivityLaunchResult(started = true)
-+            },
-+            onFailure = { error ->
-+                ActivityLaunchResult(
-+                    started = false,
-+                    message = error.message ?: error::class.java.simpleName,
-+                )
-+            },
-+        )
++            } else {
++                ActivityLaunchResult(false, "Native worker could not spawn activity manager")
++            }
++        }.getOrElse { error ->
++            ActivityLaunchResult(
++                started = false,
++                message = error.message ?: error::class.java.simpleName,
++            )
++        }
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeWorker.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeWorker.kt
+new file mode 100644
+index 0000000..b9442bf
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeWorker.kt
+@@ -0,0 +1,26 @@
++package de.szalkowski.activitylauncher.data.launcher
++
++/** Small JNI worker that only spawns the fixed Android activity-manager binary. */
++object NativeWorker {
++    private val loaded: Boolean by lazy {
++        runCatching {
++            System.loadLibrary("activitylauncher_worker")
++            true
++        }.getOrDefault(false)
++    }
++
++    @JvmStatic
++    external fun nativeSpawn(command: Array<String>): Int
++
++    @JvmStatic
++    external fun nativeAbiLevel(): Int
++
++    fun isAvailable(): Boolean = loaded
++
++    fun spawn(command: List<String>): Int? {
++        if (!loaded) return null
++        return runCatching { nativeSpawn(command.toTypedArray()) }
++            .getOrNull()
++            ?.takeIf { it > 0 }
 +    }
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt

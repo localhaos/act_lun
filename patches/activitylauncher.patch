@@ -1,5 +1,5 @@
-Cloning into '/tmp/activitylauncher-v8-verify-admin2'...
-122457 /tmp/activitylauncher-v8.patch
+Cloning into '/tmp/activitylauncher-v8-verify-admin3'...
+122533 /tmp/activitylauncher-v8.patch
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index 68a54b7..c13a919 100644
 --- a/app/build.gradle.kts
@@ -1559,16 +1559,17 @@ index 0000000..5c0a5e0
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt
 new file mode 100644
-index 0000000..94cf088
+index 0000000..714e5a4
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,68 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Context
 +import android.content.Intent
 +import dagger.hilt.android.qualifiers.ApplicationContext
 +import de.szalkowski.activitylauncher.data.database.LaunchMethodDao
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
 +import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
 +import kotlinx.coroutines.Dispatchers
 +import kotlinx.coroutines.withContext

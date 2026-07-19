@@ -77,9 +77,11 @@ jobs:
             printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
             echo "KEYSTORE=$keystore_path" >> "$GITHUB_ENV"
             echo "BUILD_TASK=assembleOssNoadsRelease" >> "$GITHUB_ENV"
+            echo "PLUGIN_BUILD_TASK=:rootlaunchplugin:assembleRelease" >> "$GITHUB_ENV"
             echo "BUILD_KIND=signed release" >> "$GITHUB_ENV"
           else
             echo "BUILD_TASK=assembleOssNoadsDebug" >> "$GITHUB_ENV"
+            echo "PLUGIN_BUILD_TASK=:rootlaunchplugin:assembleDebug" >> "$GITHUB_ENV"
             echo "BUILD_KIND=debug" >> "$GITHUB_ENV"
             if [[ -n "$KNOX_KPE_LICENSE_KEY" ]]; then
               echo "::warning::KPE activation is signature-bound; configure a stable release keystore."
@@ -95,23 +97,27 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Verify and build APK
+      - name: Verify and build APKs
         working-directory: upstream
         shell: bash
         run: |
-          ./gradlew --no-daemon spotlessCheck testOssNoadsDebugUnitTest "$BUILD_TASK" \
+          ./gradlew --no-daemon spotlessCheck testOssNoadsDebugUnitTest "$BUILD_TASK" "$PLUGIN_BUILD_TASK" \
             -PactivityLauncherVersionName="$VERSION_NAME" \
             -PactivityLauncherVersionCode="$VERSION_CODE"
 
-      - name: Locate APK
+      - name: Locate APKs
         id: apk
         working-directory: upstream
         shell: bash
         run: |
-          apk_path="$(find app/build/outputs/apk -type f -name '*.apk' | sort | head -n 1)"
-          test -n "$apk_path"
-          echo "path=$apk_path" >> "$GITHUB_OUTPUT"
-          echo "APK: $apk_path"
+          app_path="$(find app/build/outputs/apk -type f -name '*.apk' | sort | head -n 1)"
+          plugin_path="$(find rootlaunchplugin/build/outputs/apk -type f -name '*.apk' | sort | head -n 1)"
+          test -n "$app_path"
+          test -n "$plugin_path"
+          echo "app_path=$app_path" >> "$GITHUB_OUTPUT"
+          echo "plugin_path=$plugin_path" >> "$GITHUB_OUTPUT"
+          echo "App APK: $app_path"
+          echo "Root plugin APK: $plugin_path"
 
       - name: Publish GitHub Release
         working-directory: upstream
@@ -121,10 +127,12 @@ jobs:
         run: |
           safe_version="${VERSION_NAME//[^0-9A-Za-z._-]/-}"
           tag="v${safe_version}-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
-          release_file="ActivityLauncher-v8-${safe_version}-${GITHUB_RUN_NUMBER}.apk"
-          cp "${{ steps.apk.outputs.path }}" "$release_file"
-          gh release create "$tag" "$release_file" \
+          app_file="ActivityLauncher-v8-${safe_version}-${GITHUB_RUN_NUMBER}.apk"
+          plugin_file="ActivityLauncher-RootPlugin-${safe_version}-${GITHUB_RUN_NUMBER}.apk"
+          cp "${{ steps.apk.outputs.app_path }}" "$app_file"
+          cp "${{ steps.apk.outputs.plugin_path }}" "$plugin_file"
+          gh release create "$tag" "$app_file" "$plugin_file" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "ActivityLauncher v8 ${VERSION_NAME} (${GITHUB_RUN_NUMBER})" \
-            --notes "Built from ActivityLauncher/ActivityLauncher ref ${{ inputs.upstream_ref || 'master' }} with the act_lun patch. Build type: $BUILD_KIND. Knox KPE activation requires a valid key bound to this package name and signing certificate."
+            --notes "Built from ActivityLauncher/ActivityLauncher ref ${{ inputs.upstream_ref || 'master' }} with the act_lun patch. Build type: $BUILD_KIND. Install the host APK first and then the same-signature RootPlugin APK. Knox KPE activation requires a valid key bound to this package name and signing certificate."

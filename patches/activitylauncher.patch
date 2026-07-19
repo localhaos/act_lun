@@ -74,10 +74,10 @@ index b1e2f6a..d709bf7 100644
              android:name=".entrypoint.QSTileNavHostActivity"
              android:exported="false"
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
-index b7592b7..56d00d1 100644
+index b7592b7..082d05e 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
-@@ -5,25 +5,43 @@ import android.content.Intent
+@@ -5,25 +5,44 @@ import android.content.Intent
  import android.widget.Toast
  import dagger.hilt.android.qualifiers.ApplicationContext
  import de.szalkowski.activitylauncher.R
@@ -95,6 +95,7 @@ index b7592b7..56d00d1 100644
 +        val result = when (request.backend) {
 +            ActivityLaunchBackend.DEFAULT -> launchDefault(request.intent)
 +            ActivityLaunchBackend.SHIZUKU_PLUS -> ShizukuActivityLaunchExecutor().launch(request.intent)
++            ActivityLaunchBackend.ROOT_SU -> RootActivityLaunchExecutor().launch(request.intent)
 +            ActivityLaunchBackend.JVM -> JvmActivityLaunchExecutor().launch(request.intent)
 +            ActivityLaunchBackend.JNI_NATIVE -> NativeActivityLaunchExecutor().launch(request.intent)
 +        }
@@ -162,7 +163,7 @@ index 8f097b8..44096b2 100644
          } else {
              activityLauncher.launchActivity(request)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
-index 6251a88..0a11c03 100644
+index 6251a88..8d47d93 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 @@ -1,6 +1,7 @@
@@ -190,7 +191,7 @@ index 6251a88..0a11c03 100644
  import de.szalkowski.activitylauncher.presentation.common.IconPickerDialogFragment
  import de.szalkowski.activitylauncher.presentation.common.PluginChooserDialogFragment
  import kotlinx.coroutines.launch
-@@ -97,6 +101,29 @@ class ActivityDetailsFragment : Fragment() {
+@@ -97,6 +101,33 @@ class ActivityDetailsFragment : Fragment() {
                              viewModel.shareActivity()
                              true
                          }
@@ -217,22 +218,27 @@ index 6251a88..0a11c03 100644
 +                            viewModel.launchWithBackend(ActivityLaunchBackend.JNI_NATIVE)
 +                            true
 +                        }
++                        R.id.action_launch_root -> {
++                            viewModel.launchWithBackend(ActivityLaunchBackend.ROOT_SU)
++                            true
++                        }
                          else -> false
                      }
                  }
-@@ -145,6 +172,11 @@ class ActivityDetailsFragment : Fragment() {
+@@ -145,6 +176,12 @@ class ActivityDetailsFragment : Fragment() {
                          binding.btLaunchChooser.isEnabled = isEnabled
                      }
                  }
 +                launch {
 +                    viewModel.canLaunchShizuku.collect { isEnabled ->
 +                        binding.btLaunchShizuku.isEnabled = isEnabled
++                        binding.btLaunchRoot.isEnabled = isEnabled
 +                    }
 +                }
                  launch {
                      viewModel.canCreateShortcut.collect { isEnabled ->
                          binding.btCreateShortcut.isEnabled = isEnabled
-@@ -168,6 +200,14 @@ class ActivityDetailsFragment : Fragment() {
+@@ -168,6 +205,14 @@ class ActivityDetailsFragment : Fragment() {
                          Toast.makeText(requireContext(), resId, Toast.LENGTH_SHORT).show()
                      }
                  }
@@ -247,7 +253,7 @@ index 6251a88..0a11c03 100644
              }
          }
  
-@@ -205,6 +245,10 @@ class ActivityDetailsFragment : Fragment() {
+@@ -205,6 +250,14 @@ class ActivityDetailsFragment : Fragment() {
              viewModel.launchActivity()
          }
  
@@ -255,10 +261,14 @@ index 6251a88..0a11c03 100644
 +            viewModel.launchWithShizuku()
 +        }
 +
++        binding.btLaunchRoot.setOnClickListener {
++            viewModel.launchWithBackend(ActivityLaunchBackend.ROOT_SU)
++        }
++
          binding.btLaunchChooser.setOnClickListener {
              val dialog = PluginChooserDialogFragment.newInstance(
                  PluginChooserDialogFragment.PluginAction.LAUNCH,
-@@ -235,4 +279,16 @@ class ActivityDetailsFragment : Fragment() {
+@@ -235,4 +288,16 @@ class ActivityDetailsFragment : Fragment() {
              binding.btFavorite.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_favorite_border, 0, 0, 0)
          }
      }
@@ -416,10 +426,10 @@ index 7b6daa8..64cf5d3 100644
          val info = getEditedActivityInfo()
          shareActivityUseCase(info.componentName)
 diff --git a/app/src/main/res/layout/fragment_activity_details.xml b/app/src/main/res/layout/fragment_activity_details.xml
-index ba56747..6af3d96 100644
+index ba56747..81cd6f8 100644
 --- a/app/src/main/res/layout/fragment_activity_details.xml
 +++ b/app/src/main/res/layout/fragment_activity_details.xml
-@@ -114,6 +114,17 @@
+@@ -114,6 +114,28 @@
                  app:icon="@drawable/ic_more_vert" />
          </LinearLayout>
  
@@ -434,23 +444,34 @@ index ba56747..6af3d96 100644
 +            android:text="@string/context_action_launch_shizuku"
 +            app:layout_constraintTop_toBottomOf="@+id/llLaunch" />
 +
++        <com.google.android.material.button.MaterialButton
++            android:id="@+id/btLaunchRoot"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:layout_marginHorizontal="8dp"
++            android:layout_marginTop="8dp"
++            app:icon="@drawable/ic_rocket_launch"
++            app:iconTint="?attr/colorOnPrimary"
++            android:text="@string/context_action_launch_root"
++            app:layout_constraintTop_toBottomOf="@+id/btLaunchShizuku" />
++
          <LinearLayout
              android:id="@+id/llCreateShortcut"
              android:layout_width="match_parent"
-@@ -121,7 +132,7 @@
+@@ -121,7 +143,7 @@
              android:layout_marginHorizontal="8dp"
              android:layout_marginTop="8dp"
              android:orientation="horizontal"
 -            app:layout_constraintTop_toBottomOf="@+id/llLaunch">
-+            app:layout_constraintTop_toBottomOf="@+id/btLaunchShizuku">
++            app:layout_constraintTop_toBottomOf="@+id/btLaunchRoot">
  
              <com.google.android.material.button.MaterialButton
                  android:id="@+id/btCreateShortcut"
 diff --git a/app/src/main/res/menu/menu_activity_details.xml b/app/src/main/res/menu/menu_activity_details.xml
-index 508ab02..3a6a0ef 100644
+index 508ab02..2879033 100644
 --- a/app/src/main/res/menu/menu_activity_details.xml
 +++ b/app/src/main/res/menu/menu_activity_details.xml
-@@ -11,4 +11,24 @@
+@@ -11,4 +11,28 @@
          android:title="@string/context_action_share"
          android:icon="@drawable/ic_share"
          app:showAsAction="ifRoom" />
@@ -474,18 +495,23 @@ index 508ab02..3a6a0ef 100644
 +        android:id="@+id/action_launch_native"
 +        android:title="@string/context_action_launch_native"
 +        app:showAsAction="never" />
++    <item
++        android:id="@+id/action_launch_root"
++        android:title="@string/context_action_launch_root"
++        app:showAsAction="never" />
  </menu>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 4893048..6194ebe 100644
+index 4893048..062f6fc 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -11,6 +11,20 @@
+@@ -11,6 +11,21 @@
      <string name="context_action_favorite_add" comment="Context menu action to add an activity to the favorites list">Add to favorites</string>
      <string name="context_action_favorite_remove" comment="Context menu action to remove an activity from the favorites list">Remove from favorites</string>
      <string name="context_action_launch" comment="Context menu action to launch an activity normally">Launch activity</string>
 +    <string name="context_action_launch_shizuku">Launch with Shizuku+</string>
 +    <string name="context_action_launch_jvm">Launch via JVM executor</string>
 +    <string name="context_action_launch_native">Launch via JNI/native executor</string>
++    <string name="context_action_launch_root">Launch via root (su)</string>
 +    <string name="context_action_audit">Audit package</string>
 +    <string name="action_enable_activity">Enable activity</string>
 +    <string name="action_disable_activity">Disable activity</string>
@@ -500,7 +526,7 @@ index 4893048..6194ebe 100644
      <string name="context_action_share" comment="App bar action to share the current activity or app info">Share</string>
      <string name="context_action_share_shortcut" comment="Context menu action to share a created shortcut as a link">Share shortcut</string>
      <string name="context_action_shortcut" comment="Context menu action to create a home screen shortcut for an activity">Create shortcut</string>
-@@ -23,6 +37,9 @@
+@@ -23,6 +38,9 @@
      <string name="error_invalid_activity_link" comment="Error message for invalid deep link or activity reference">Invalid activity link provided</string>
      <string name="error_invalid_icon_format" comment="Error message when the selected icon file format is not supported">Error: invalid icon format</string>
      <string name="error_invalid_icon_resource" comment="Error message for invalid or non-existent icon resource">Error: invalid icon resource</string>
@@ -510,7 +536,7 @@ index 4893048..6194ebe 100644
      <string name="error_verbose_pin_shortcut" comment="Error message when the device launcher does not support pinning shortcuts">Current launcher does not support "PinShortcut". Unable to create shortcut.</string>
      <string name="exception_invalid_component_name" comment="Error message for dangerous or invalid component names. %s is the problematic component">Invalid or potentially harmful component name: %s</string>
      <string name="filter_hint" comment="Hint text in the filter search input field">package/action</string>
-@@ -56,4 +73,12 @@
+@@ -56,4 +74,12 @@
      <string name="title_dialog_support" comment="Dialog title for the support/donate dialog">Thanks for using Activity Launcher</string>
      <string name="title_fragment_activity_list" comment="Screen title showing activities within a selected package">Activities</string>
      <string name="title_fragment_package_list" comment="Screen title for the list of installed packages/apps">Installed packages</string>
@@ -575,10 +601,10 @@ index 960740b..303d15a 100644
 +android.ndk.suppressMinSdkVersionError=21
 diff --git a/ADVANCED_EXECUTORS.md b/ADVANCED_EXECUTORS.md
 new file mode 100644
-index 0000000..442cf25
+index 0000000..5c345b3
 --- /dev/null
 +++ b/ADVANCED_EXECUTORS.md
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,67 @@
 +# Advanced executors and APK audit
 +
 +This fork adds four explicit activity-launch backends:
@@ -587,6 +613,8 @@ index 0000000..442cf25
 +- `SHIZUKU_PLUS` — sends an argument vector to `/system/bin/am` through the user-approved
 +  Shizuku process. No `sh -c`, hidden API bypass, assistant hijacking, or automatic permission
 +  granting is used.
++- `ROOT_SU` — invokes an already-installed root manager as `su 0 -- /system/bin/am ...` after
++  the user explicitly selects the root action. It does not install, obtain, or hide root access.
 +- `JVM` — starts the same non-privileged command through `Runtime.exec()`.
 +- `JNI_NATIVE` — starts it through the bundled `libactivitylauncher_worker.so`; the JNI worker
 +  accepts only `/system/bin/am` and an argument vector, then uses `fork`/`execv`. It does not
@@ -595,7 +623,8 @@ index 0000000..442cf25
 +The JVM and JNI/native backends do not elevate privileges. They are useful for compatibility and
 +diagnostic testing; private or non-exported activity access requires Shizuku/Sui/root and the
 +corresponding user authorization. The JNI worker is built by the app's CMake/NDK configuration
-+and is packaged per Android ABI.
++and is packaged per Android ABI. Shizuku and root executors now return the command exit status
++and error output so a Knox permission denial is not reported as a false success.
 +
 +## Review of `localhaos/testjne`
 +
@@ -1265,12 +1294,79 @@ index 0000000..b9442bf
 +            ?.takeIf { it > 0 }
 +    }
 +}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootActivityLaunchExecutor.kt
+new file mode 100644
+index 0000000..b0a712c
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootActivityLaunchExecutor.kt
+@@ -0,0 +1,61 @@
++package de.szalkowski.activitylauncher.data.launcher
++
++import android.content.Intent
++import de.szalkowski.activitylauncher.core.util.ActivityCommandBuilder
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchExecutor
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
++import java.io.File
++import javax.inject.Inject
++import kotlin.concurrent.thread
++
++/**
++ * Starts an activity through an existing root manager. The command remains an argument vector:
++ * no command string, shell interpolation, hooks, or privilege escalation is performed here.
++ */
++class RootActivityLaunchExecutor @Inject constructor() : ActivityLaunchExecutor {
++    override val backend: ActivityLaunchBackend = ActivityLaunchBackend.ROOT_SU
++
++    override fun isAvailable(): Boolean = suCandidates().any { it == "su" || File(it).canExecute() }
++
++    override fun launch(intent: Intent): ActivityLaunchResult {
++        val command = ActivityCommandBuilder.buildStartCommand(intent)
++        val su = suCandidates().firstOrNull { it == "su" || File(it).canExecute() }
++            ?: return ActivityLaunchResult(false, "Nie znaleziono su/root managera")
++
++        return runCatching {
++            val process = Runtime.getRuntime().exec((listOf(su, "0", "--") + command).toTypedArray())
++            process.outputStream.close()
++            val stdout = StringBuilder()
++            val stderr = StringBuilder()
++            val stdoutReader = thread(start = true, isDaemon = true, name = "activitylauncher-root-stdout") {
++                process.inputStream.bufferedReader().use { stdout.append(it.readText()) }
++            }
++            val stderrReader = thread(start = true, isDaemon = true, name = "activitylauncher-root-stderr") {
++                process.errorStream.bufferedReader().use { stderr.append(it.readText()) }
++            }
++            val exitCode = process.waitFor()
++            stdoutReader.join()
++            stderrReader.join()
++            if (exitCode == 0) {
++                ActivityLaunchResult(true)
++            } else {
++                ActivityLaunchResult(
++                    false,
++                    (stderr.toString().ifBlank { stdout.toString() }).trim()
++                        .ifBlank { "su zakończyło pracę z kodem $exitCode" },
++                )
++            }
++        }.getOrElse { error ->
++            ActivityLaunchResult(false, error.message ?: error::class.java.simpleName)
++        }
++    }
++
++    private fun suCandidates(): List<String> = listOf(
++        "/system/bin/su",
++        "/system/xbin/su",
++        "/sbin/su",
++        "/su/bin/su",
++        "su",
++    )
++}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..b85165f
+index 0000000..e530678
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,62 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Intent
@@ -1279,7 +1375,6 @@ index 0000000..b85165f
 +import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
 +import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
 +import javax.inject.Inject
-+import kotlin.concurrent.thread
 +
 +enum class ShizukuState {
 +    UNSUPPORTED,
@@ -1317,10 +1412,15 @@ index 0000000..b85165f
 +
 +        return runCatching {
 +            val command = ActivityCommandBuilder.buildStartCommand(intent)
-+            thread(start = true, isDaemon = true, name = "activitylauncher-shizuku-process") {
-+                runCatching { commandExecutor.execute(command) }
++            val result = commandExecutor.execute(command)
++            if (result.succeeded) {
++                ActivityLaunchResult(started = true)
++            } else {
++                ActivityLaunchResult(
++                    started = false,
++                    message = result.message ?: "am zakończyło pracę z kodem ${result.exitCode}",
++                )
 +            }
-+            ActivityLaunchResult(started = true)
 +        }.getOrElse { error ->
 +            ActivityLaunchResult(
 +                started = false,
@@ -1570,10 +1670,10 @@ index 0000000..ad33d5c
 +)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt
 new file mode 100644
-index 0000000..a446141
+index 0000000..c4d3285
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,16 @@
 +package de.szalkowski.activitylauncher.domain.model
 +
 +/**
@@ -1581,11 +1681,12 @@ index 0000000..a446141
 + *
 + * JVM and JNI_NATIVE do not grant additional privileges. They are explicit process-launch
 + * backends for diagnostics and compatibility testing. SHIZUKU_PLUS requires a user-approved
-+ * Shizuku grant and is the only backend intended to cross the normal activity-export boundary.
++ * Shizuku grant. ROOT_SU requires an already-installed root manager and explicit user approval.
 + */
 +enum class ActivityLaunchBackend {
 +    DEFAULT,
 +    SHIZUKU_PLUS,
++    ROOT_SU,
 +    JVM,
 +    JNI_NATIVE,
 +}

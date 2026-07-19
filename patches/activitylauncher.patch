@@ -1,5 +1,5 @@
-Cloning into '/tmp/activitylauncher-v8-verify-safe'...
-151251 /tmp/activitylauncher-v8.patch
+Cloning into '/tmp/activitylauncher-v8-verify-wrapper'...
+154454 /tmp/activitylauncher-v8.patch
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index 68a54b7..c13a919 100644
 --- a/app/build.gradle.kts
@@ -1339,10 +1339,10 @@ index 0000000..7021324
 +select a local APK explicitly and handle the returned `Result`.
 diff --git a/app/src/main/cpp/CMakeLists.txt b/app/src/main/cpp/CMakeLists.txt
 new file mode 100644
-index 0000000..5456d36
+index 0000000..2e4867c
 --- /dev/null
 +++ b/app/src/main/cpp/CMakeLists.txt
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,16 @@
 +cmake_minimum_required(VERSION 3.22.1)
 +
 +project(activitylauncher_worker LANGUAGES CXX)
@@ -1352,6 +1352,7 @@ index 0000000..5456d36
 +    SHARED
 +    activitylauncher_worker.cpp
 +    activitylauncher_diagnostics.cpp
++    activitylauncher_wrapper.h
 +)
 +
 +target_compile_features(activitylauncher_worker PRIVATE cxx_std_17)
@@ -1360,38 +1361,36 @@ index 0000000..5456d36
 +target_link_libraries(activitylauncher_worker PRIVATE log dl)
 diff --git a/app/src/main/cpp/activitylauncher_diagnostics.cpp b/app/src/main/cpp/activitylauncher_diagnostics.cpp
 new file mode 100644
-index 0000000..ade70c2
+index 0000000..f3686c0
 --- /dev/null
 +++ b/app/src/main/cpp/activitylauncher_diagnostics.cpp
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,128 @@
++#include "activitylauncher_wrapper.h"
++
 +#include <jni.h>
 +
-+#include <atomic>
 +#include <cerrno>
-+#include <cstdint>
 +#include <cstring>
 +#include <dlfcn.h>
-+#include <mutex>
-+#include <string>
 +
++namespace activitylauncher {
 +namespace {
-+constexpr size_t kMaxFieldLength = 256;
-+std::atomic<uint64_t> gEventCount{0};
-+std::mutex gDiagnosticMutex;
++constexpr const char* kOwnLibrary = "libactivitylauncher_worker.so";
++constexpr int kFallback = -ENOENT;
 +
-+bool copyJString(JNIEnv* env, jstring value, std::string* output) {
-+    if (env == nullptr || value == nullptr || output == nullptr) return false;
-+    const char* chars = env->GetStringUTFChars(value, nullptr);
-+    if (chars == nullptr) return false;
-+    const size_t length = strlen(chars);
-+    const bool valid = length <= kMaxFieldLength;
-+    if (valid) output->assign(chars, length);
-+    env->ReleaseStringUTFChars(value, chars);
-+    return valid;
++ActivityLauncherWrapper& instance() noexcept {
++    static ActivityLauncherWrapper wrapper;
++    return wrapper;
++}
++}  // namespace
++
++bool ActivityLauncherWrapper::validField(const std::string& value) noexcept {
++    return !value.empty() && value.size() <= kMaxFieldLength &&
++           value.find('\0') == std::string::npos;
 +}
 +
-+uint64_t anonymizedHash(const std::string& value) {
-+    // FNV-1a is used only as a non-reversible telemetry label, never as authentication.
++uint64_t ActivityLauncherWrapper::anonymizedHash(const std::string& value) noexcept {
++    // FNV-1a is an anonymized telemetry label, never an authentication primitive.
 +    uint64_t hash = 1469598103934665603ULL;
 +    for (unsigned char byte : value) {
 +        hash ^= byte;
@@ -1399,7 +1398,55 @@ index 0000000..ade70c2
 +    }
 +    return hash;
 +}
-+}  // namespace
++
++int64_t ActivityLauncherWrapper::record(std::string event, std::string value) noexcept {
++    if (!validField(event) || !validField(value)) return kFallback;
++    const uint64_t eventHash = anonymizedHash(event);
++    const uint64_t valueHash = anonymizedHash(value);
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        // Raw values are deliberately not retained or logged.
++        (void)eventHash;
++        (void)valueHash;
++        eventCount_.fetch_add(1, std::memory_order_relaxed);
++    }
++    return eventCount_.load(std::memory_order_relaxed);
++}
++
++int ActivityLauncherWrapper::resolveSymbol(const char* symbolName, int fallback) noexcept {
++    if (symbolName == nullptr || std::strlen(symbolName) == 0) return fallback;
++
++    dlerror();
++    void* handle = dlopen(kOwnLibrary, RTLD_NOW | RTLD_LOCAL);
++    const char* openError = dlerror();
++    if (handle == nullptr || openError != nullptr) {
++        if (handle != nullptr) dlclose(handle);
++        return fallback;
++    }
++
++    dlerror();
++    void* symbol = dlsym(handle, symbolName);
++    const char* lookupError = dlerror();
++    if (symbol == nullptr || lookupError != nullptr) {
++        dlclose(handle);
++        return fallback;
++    }
++
++    using DiagnosticFunction = int (*)();
++    const int result = reinterpret_cast<DiagnosticFunction>(symbol)();
++    dlclose(handle);
++    return result;
++}
++
++int ActivityLauncherWrapper::resolveOwnSymbol() noexcept {
++    return resolveSymbol("activitylauncher_diagnostic_ping", kFallback);
++}
++
++bool ActivityLauncherWrapper::fallbackSelfTest() noexcept {
++    return resolveSymbol("activitylauncher_symbol_that_does_not_exist", kFallback) == kFallback;
++}
++
++}  // namespace activitylauncher
 +
 +extern "C" __attribute__((visibility("default"))) int activitylauncher_diagnostic_ping() {
 +    return 1;
@@ -1412,22 +1459,23 @@ index 0000000..ade70c2
 +    jstring event,
 +    jstring value
 +) {
-+    std::string eventValue;
-+    std::string dataValue;
-+    if (!copyJString(env, event, &eventValue) || !copyJString(env, value, &dataValue)) {
++    if (env == nullptr || event == nullptr || value == nullptr) return -EINVAL;
++    const char* eventChars = env->GetStringUTFChars(event, nullptr);
++    const char* valueChars = env->GetStringUTFChars(value, nullptr);
++    if (eventChars == nullptr || valueChars == nullptr) {
++        if (eventChars != nullptr) env->ReleaseStringUTFChars(event, eventChars);
++        if (valueChars != nullptr) env->ReleaseStringUTFChars(value, valueChars);
 +        return -EINVAL;
 +    }
-+
-+    const uint64_t eventHash = anonymizedHash(eventValue);
-+    const uint64_t valueHash = anonymizedHash(dataValue);
-+    {
-+        std::lock_guard<std::mutex> lock(gDiagnosticMutex);
-+        // Only hashes and a counter are retained; raw input is never logged or stored.
-+        (void)eventHash;
-+        (void)valueHash;
-+        gEventCount.fetch_add(1, std::memory_order_relaxed);
-+    }
-+    return static_cast<jlong>(gEventCount.load(std::memory_order_relaxed));
++    const jsize eventLength = env->GetStringUTFLength(event);
++    const jsize valueLength = env->GetStringUTFLength(value);
++    const bool valid = eventLength > 0 && eventLength <= 256 && valueLength > 0 && valueLength <= 256;
++    const jlong result = valid
++        ? activitylauncher::instance().record(eventChars, valueChars)
++        : static_cast<jlong>(-EINVAL);
++    env->ReleaseStringUTFChars(event, eventChars);
++    env->ReleaseStringUTFChars(value, valueChars);
++    return result;
 +}
 +
 +extern "C" JNIEXPORT jint JNICALL
@@ -1435,22 +1483,15 @@ index 0000000..ade70c2
 +    JNIEnv*,
 +    jclass
 +) {
-+    dlerror();
-+    void* handle = dlopen("libactivitylauncher_worker.so", RTLD_NOW | RTLD_LOCAL);
-+    if (handle == nullptr) return -ENOENT;
++    return activitylauncher::instance().resolveOwnSymbol();
++}
 +
-+    dlerror();
-+    void* symbol = dlsym(handle, "activitylauncher_diagnostic_ping");
-+    const char* error = dlerror();
-+    if (symbol == nullptr || error != nullptr) {
-+        dlclose(handle);
-+        return -ENOENT;
-+    }
-+
-+    using Ping = int (*)();
-+    const int result = reinterpret_cast<Ping>(symbol)();
-+    dlclose(handle);
-+    return result;
++extern "C" JNIEXPORT jboolean JNICALL
++Java_de_szalkowski_activitylauncher_data_launcher_NativeDiagnostics_nativeFallbackSelfTest(
++    JNIEnv*,
++    jclass
++) {
++    return activitylauncher::instance().fallbackSelfTest() ? JNI_TRUE : JNI_FALSE;
 +}
 diff --git a/app/src/main/cpp/activitylauncher_worker.cpp b/app/src/main/cpp/activitylauncher_worker.cpp
 new file mode 100644
@@ -1558,6 +1599,46 @@ index 0000000..f3b5b98
 +    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
 +    return -ECHILD;
 +}
+diff --git a/app/src/main/cpp/activitylauncher_wrapper.h b/app/src/main/cpp/activitylauncher_wrapper.h
+new file mode 100644
+index 0000000..b237691
+--- /dev/null
++++ b/app/src/main/cpp/activitylauncher_wrapper.h
+@@ -0,0 +1,34 @@
++#pragma once
++
++#include <atomic>
++#include <cstdint>
++#include <mutex>
++#include <string>
++
++namespace activitylauncher {
++
++class ActivityLauncherWrapper final {
++public:
++    ActivityLauncherWrapper() = default;
++
++    // Records only anonymized labels and returns the current event count.
++    int64_t record(std::string event, std::string value) noexcept;
++
++    // Resolves a known symbol from an internal library; returns a fallback on failure.
++    int resolveOwnSymbol() noexcept;
++
++    // Exercises the linker failure path without invoking an invalid function pointer.
++    bool fallbackSelfTest() noexcept;
++
++private:
++    static constexpr size_t kMaxFieldLength = 256;
++
++    static bool validField(const std::string& value) noexcept;
++    static uint64_t anonymizedHash(const std::string& value) noexcept;
++    int resolveSymbol(const char* symbolName, int fallback) noexcept;
++
++    std::atomic<int64_t> eventCount_{0};
++    std::mutex mutex_;
++};
++
++}  // namespace activitylauncher
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt b/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt
 new file mode 100644
 index 0000000..88fe476
@@ -2144,10 +2225,10 @@ index 0000000..f22fc7c
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeDiagnostics.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeDiagnostics.kt
 new file mode 100644
-index 0000000..707d589
+index 0000000..beabb92
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeDiagnostics.kt
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,35 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +/** Explicit, app-local native diagnostics; it does not hook or inspect other processes. */
@@ -2165,6 +2246,9 @@ index 0000000..707d589
 +    @JvmStatic
 +    private external fun nativeResolveOwnSymbol(): Int
 +
++    @JvmStatic
++    private external fun nativeFallbackSelfTest(): Boolean
++
 +    fun record(event: String, value: String): Long {
 +        if (!loaded || event.length > MAX_FIELD_LENGTH || value.length > MAX_FIELD_LENGTH) return -1L
 +        return runCatching { nativeRecord(event, value) }.getOrDefault(-1L)
@@ -2172,6 +2256,10 @@ index 0000000..707d589
 +
 +    fun resolveOwnSymbol(): Boolean {
 +        return loaded && runCatching { nativeResolveOwnSymbol() == 1 }.getOrDefault(false)
++    }
++
++    fun fallbackSelfTest(): Boolean {
++        return loaded && runCatching { nativeFallbackSelfTest() }.getOrDefault(false)
 +    }
 +
 +    private const val MAX_FIELD_LENGTH = 256

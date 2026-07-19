@@ -1941,26 +1941,40 @@ index 0000000..bae41bc
 +</resources>
 diff --git a/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt
 new file mode 100644
-index 0000000..dbcc909
+index 0000000..9385a55
 --- /dev/null
 +++ b/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,41 @@
 +package de.szalkowski.activitylauncher.core.util
 +
 +import android.content.ComponentName
 +import android.content.Intent
++import android.os.Bundle
 +import org.junit.Assert.assertEquals
 +import org.junit.Assert.assertFalse
 +import org.junit.Assert.assertTrue
 +import org.junit.Test
++import org.mockito.kotlin.doReturn
++import org.mockito.kotlin.mock
++import org.mockito.kotlin.whenever
 +
 +class ActivityCommandBuilderTest {
 +    @Test
 +    fun `builds an argument vector and preserves values with shell syntax`() {
-+        val intent = Intent("com.example.ACTION")
-+            .setComponent(ComponentName("com.example.app", "com.example.app.HiddenActivity"))
-+            .putExtra("payload", "$(touch /data/local/tmp/should-not-run)")
-+            .putExtra("enabled", true)
++        val component = mock<ComponentName> {
++            on { flattenToString() } doReturn "com.example.app/com.example.app.HiddenActivity"
++        }
++        val extras = mock<Bundle>()
++        whenever(extras.keySet()).thenReturn(setOf("enabled", "payload"))
++        whenever(extras.get("payload")).thenReturn("$(touch /data/local/tmp/should-not-run)")
++        whenever(extras.get("enabled")).thenReturn(true)
++        val intent = mock<Intent>()
++        whenever(intent.component).thenReturn(component)
++        whenever(intent.action).thenReturn("com.example.ACTION")
++        whenever(intent.data).thenReturn(null)
++        whenever(intent.type).thenReturn(null)
++        whenever(intent.categories).thenReturn(null)
++        whenever(intent.extras).thenReturn(extras)
 +
 +        val command = ActivityCommandBuilder.buildStartCommand(intent)
 +
@@ -1974,16 +1988,18 @@ index 0000000..dbcc909
 +}
 diff --git a/app/src/test/java/de/szalkowski/activitylauncher/core/util/PackageStateCommandBuilderTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/core/util/PackageStateCommandBuilderTest.kt
 new file mode 100644
-index 0000000..2d4191b
+index 0000000..71cb9f8
 --- /dev/null
 +++ b/app/src/test/java/de/szalkowski/activitylauncher/core/util/PackageStateCommandBuilderTest.kt
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,44 @@
 +package de.szalkowski.activitylauncher.core.util
 +
 +import android.content.ComponentName
 +import org.junit.Assert.assertEquals
 +import org.junit.Assert.assertThrows
 +import org.junit.Test
++import org.mockito.kotlin.doReturn
++import org.mockito.kotlin.mock
 +
 +class PackageStateCommandBuilderTest {
 +    @Test
@@ -1996,6 +2012,11 @@ index 0000000..2d4191b
 +
 +    @Test
 +    fun `builds per-user activity disable command`() {
++        val component = mock<ComponentName> {
++            on { packageName } doReturn "com.example.app"
++            on { className } doReturn "com.example.app.HiddenActivity"
++            on { flattenToString() } doReturn "com.example.app/com.example.app.HiddenActivity"
++        }
 +        assertEquals(
 +            listOf(
 +                "/system/bin/pm",
@@ -2004,11 +2025,7 @@ index 0000000..2d4191b
 +                "0",
 +                "com.example.app/com.example.app.HiddenActivity",
 +            ),
-+            PackageStateCommandBuilder.buildActivityCommand(
-+                ComponentName("com.example.app", "com.example.app.HiddenActivity"),
-+                false,
-+                0,
-+            ),
++            PackageStateCommandBuilder.buildActivityCommand(component, false, 0),
 +        )
 +    }
 +

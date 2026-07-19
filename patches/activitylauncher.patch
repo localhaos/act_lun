@@ -1,5 +1,5 @@
-Cloning into '/tmp/activitylauncher-v8-verify-wrapper'...
-154454 /tmp/activitylauncher-v8.patch
+Cloning into '/tmp/activitylauncher-v8-verify-wrapper2'...
+154539 /tmp/activitylauncher-v8.patch
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index 68a54b7..c13a919 100644
 --- a/app/build.gradle.kts
@@ -395,7 +395,7 @@ index b7592b7..082d05e 100644
 +    }
  }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherProxyImpl.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherProxyImpl.kt
-index cdcb087..1dcf125 100644
+index cdcb087..a57d29d 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherProxyImpl.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherProxyImpl.kt
 @@ -8,6 +8,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
@@ -406,7 +406,7 @@ index cdcb087..1dcf125 100644
  import de.szalkowski.activitylauncher.domain.model.LaunchRequest
  import de.szalkowski.activitylauncher.domain.model.PluginInfo
  import javax.inject.Inject
-@@ -18,12 +19,20 @@ class ActivityLauncherProxyImpl @Inject constructor(
+@@ -18,12 +19,23 @@ class ActivityLauncherProxyImpl @Inject constructor(
      private val pm: PackageManager = context.packageManager
  
      override fun launchActivity(request: LaunchRequest) {
@@ -416,8 +416,11 @@ index cdcb087..1dcf125 100644
 +        val plugin = request.launcherPlugin
 +        val signedPlugin = plugin != null && isSignedPlugin(plugin)
 +        val intent = Intent(
-+            if (signedPlugin) SignedPluginContract.ACTION_LAUNCH
-+            else ActivityLauncherProxy.INTENT_LAUNCH_ACTIVITY,
++            if (signedPlugin) {
++                SignedPluginContract.ACTION_LAUNCH
++            } else {
++                ActivityLauncherProxy.INTENT_LAUNCH_ACTIVITY
++            },
 +        )
 +        if (plugin != null) {
 +            intent.component = plugin
@@ -430,7 +433,7 @@ index cdcb087..1dcf125 100644
          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
  
          context.startActivity(intent)
-@@ -36,13 +45,33 @@ class ActivityLauncherProxyImpl @Inject constructor(
+@@ -36,13 +48,33 @@ class ActivityLauncherProxyImpl @Inject constructor(
      }
  
      override fun getPlugins(): List<PluginInfo> {
@@ -469,20 +472,21 @@ index cdcb087..1dcf125 100644
 +    }
  }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImpl.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImpl.kt
-index 180b7e6..0c6e207 100644
+index 180b7e6..233542c 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImpl.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ViewIntentParserImpl.kt
-@@ -1,7 +1,10 @@
+@@ -1,8 +1,11 @@
  package de.szalkowski.activitylauncher.data.launcher
  
  import android.content.ComponentName
 +import android.content.Context
  import android.content.Intent
 +import android.net.Uri
-+import dagger.hilt.android.qualifiers.ApplicationContext
  import androidx.core.graphics.drawable.IconCompat
++import dagger.hilt.android.qualifiers.ApplicationContext
  import de.szalkowski.activitylauncher.domain.launcher.ShortcutCreator
  import de.szalkowski.activitylauncher.domain.launcher.ViewIntentParser
+ import de.szalkowski.activitylauncher.domain.model.LaunchRequest
 @@ -12,6 +15,7 @@ import javax.inject.Inject
  
  class ViewIntentParserImpl @Inject constructor(
@@ -3453,14 +3457,13 @@ index 0000000..208368e
 +}
 diff --git a/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ContentUriIntentReaderFuzzTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ContentUriIntentReaderFuzzTest.kt
 new file mode 100644
-index 0000000..bbe7a3a
+index 0000000..e2197f9
 --- /dev/null
 +++ b/app/src/test/java/de/szalkowski/activitylauncher/data/launcher/ContentUriIntentReaderFuzzTest.kt
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,33 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Intent
-+import org.junit.Assert.assertNull
 +import org.junit.Test
 +import kotlin.random.Random
 +

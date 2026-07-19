@@ -560,6 +560,19 @@ index 560ee48..afa8d1b 100644
      @Test
      fun `should create shortcut`() {
          val mockIntent = mock<android.content.Intent>()
+diff --git a/gradle.properties b/gradle.properties
+index 960740b..303d15a 100644
+--- a/gradle.properties
++++ b/gradle.properties
+@@ -35,3 +35,8 @@ android.builtInKotlin=true
+ # (com.pangle.global:pag-sdk and pag-sdk-ad both declare namespace 'com.bytedance')
+ # Remove once playwiresdk upgrades to Pangle SDK 7.8.6+ which fixes this.
+ android.uniquePackageNames=false
++
++# The JNI worker is optional and best-effort on the legacy minSdk 16 target.
++# Keep the app's existing minimum SDK while allowing the installed NDK to
++# configure the native target; privileged operations remain Shizuku-gated.
++android.ndk.suppressMinSdkVersionError=21
 diff --git a/ADVANCED_EXECUTORS.md b/ADVANCED_EXECUTORS.md
 new file mode 100644
 index 0000000..442cf25

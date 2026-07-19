@@ -1,5 +1,5 @@
-Cloning into '/tmp/activitylauncher-v8-verify-wrapper2'...
-154539 /tmp/activitylauncher-v8.patch
+Cloning into '/tmp/activitylauncher-v8-verify-final'...
+155257 /tmp/activitylauncher-v8.patch
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index 68a54b7..c13a919 100644
 --- a/app/build.gradle.kts
@@ -1899,10 +1899,10 @@ index 0000000..87f0d92
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt
 new file mode 100644
-index 0000000..5c0a5e0
+index 0000000..283fb04
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,152 @@
 +package de.szalkowski.activitylauncher.data.audit
 +
 +import android.content.Context
@@ -1996,6 +1996,17 @@ index 0000000..5c0a5e0
 +        }
 +
 +        val activities = packageInfo.activities.orEmpty()
++        activities.filter { it.exported && it.permission.isNullOrBlank() }.forEach { activity ->
++            add(
++                AuditFinding(
++                    type = AuditFindingType.EXPORTED_COMPONENT,
++                    severity = AuditSeverity.MEDIUM,
++                    value = activity.name,
++                    source = "AndroidManifest.xml",
++                    details = "Aktywność jest eksportowana bez permission; zweryfikuj kontrolę dostępu i walidację wejścia.",
++                ),
++            )
++        }
 +        return PackageAuditResult(
 +            packageName = packageName,
 +            label = packageManager.getApplicationLabel(applicationInfo).toString(),
@@ -2615,7 +2626,7 @@ index 0000000..93230ce
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/plugin/SignedPluginLoader.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/plugin/SignedPluginLoader.kt
 new file mode 100644
-index 0000000..c5139a7
+index 0000000..ac1c9e2
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/plugin/SignedPluginLoader.kt
 @@ -0,0 +1,135 @@
@@ -2721,7 +2732,7 @@ index 0000000..c5139a7
 +    }
 +
 +    private fun signatures(info: android.content.pm.PackageInfo): Set<ByteArrayKey> {
-+        val values: Array<Signature> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++        val values: Array<out Signature> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 +            info.signingInfo?.apkContentsSigners.orEmpty()
 +        } else {
 +            @Suppress("DEPRECATION")
@@ -2756,16 +2767,17 @@ index 0000000..c5139a7
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt
 new file mode 100644
-index 0000000..75069ad
+index 0000000..a756205
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/audit/PackageAudit.kt
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,38 @@
 +package de.szalkowski.activitylauncher.domain.audit
 +
 +enum class AuditFindingType {
 +    SECRET_CODE,
 +    DEBUG_MARKER,
 +    SENSITIVE_LITERAL,
++    EXPORTED_COMPONENT,
 +}
 +
 +enum class AuditSeverity {
@@ -3106,10 +3118,10 @@ index 0000000..c519b02
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/audit/PackageAuditFormatter.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/audit/PackageAuditFormatter.kt
 new file mode 100644
-index 0000000..f8defea
+index 0000000..0416877
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/audit/PackageAuditFormatter.kt
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,58 @@
 +package de.szalkowski.activitylauncher.presentation.audit
 +
 +import de.szalkowski.activitylauncher.domain.audit.AuditFindingType
@@ -3137,6 +3149,10 @@ index 0000000..f8defea
 +        appendLine("== SENSITIVE LITERAL CANDIDATES ==")
 +        appendFindings(result, AuditFindingType.SENSITIVE_LITERAL)
 +        appendLine("Wartości wrażliwe są celowo redagowane; wynik wymaga ręcznej weryfikacji.")
++        appendLine()
++
++        appendLine("== EXPORTED COMPONENT RISKS ==")
++        appendFindings(result, AuditFindingType.EXPORTED_COMPONENT)
 +        appendLine()
 +
 +        appendLine("== NATIVE LIBRARIES ==")

@@ -2117,7 +2117,7 @@ index 0000000..87f0d92
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt
 new file mode 100644
-index 0000000..13f6c81
+index 0000000..5a6f0ca
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/audit/PackageAuditScanner.kt
 @@ -0,0 +1,170 @@
@@ -2226,7 +2226,7 @@ index 0000000..13f6c81
 +                    value = "Lombok SCL: $lombokSclCount (ASM: $asmSclCount)",
 +                    source = "APK ZIP entries",
 +                    details =
-+                        "Klasy narzędzia kompilacyjnego są spakowane jako zasoby; ART nie uruchamia ich bezpośrednio.",
++                    "Klasy narzędzia kompilacyjnego są spakowane jako zasoby; ART nie uruchamia ich bezpośrednio.",
 +                ),
 +            )
 +        }

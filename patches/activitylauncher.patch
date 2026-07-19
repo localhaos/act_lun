@@ -23,14 +23,14 @@ index 68a54b7..3cea6f8 100644
      val roomVersion = "2.6.1"
      implementation("androidx.room:room-runtime:$roomVersion")
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index b1e2f6a..3881424 100644
+index b1e2f6a..d709bf7 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -2,10 +2,13 @@
  <manifest xmlns:android="http://schemas.android.com/apk/res/android"
      xmlns:tools="http://schemas.android.com/tools">
  
-+    <uses-sdk tools:overrideLibrary="rikka.shizuku.provider,rikka.shizuku.api,rikka.shizuku.shared" />
++    <uses-sdk tools:overrideLibrary="rikka.shizuku.provider,rikka.shizuku.api,rikka.shizuku.shared,rikka.shizuku.aidl" />
 +
      <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
      <uses-permission

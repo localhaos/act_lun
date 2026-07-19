@@ -264,15 +264,15 @@ index 6251a88..0a11c03 100644
 +    }
  }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
-index 7b6daa8..d7a21d1 100644
+index 7b6daa8..64cf5d3 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
 @@ -10,8 +10,13 @@ import androidx.lifecycle.viewModelScope
  import dagger.hilt.android.lifecycle.HiltViewModel
  import de.szalkowski.activitylauncher.R
  import de.szalkowski.activitylauncher.core.util.getActivityIntent
-+import de.szalkowski.activitylauncher.data.launcher.ShizukuActivityLaunchExecutor
 +import de.szalkowski.activitylauncher.data.launcher.PackageStateChangeResult
++import de.szalkowski.activitylauncher.data.launcher.ShizukuActivityLaunchExecutor
 +import de.szalkowski.activitylauncher.data.launcher.ShizukuPackageStateExecutor
 +import de.szalkowski.activitylauncher.data.launcher.ShizukuState
  import de.szalkowski.activitylauncher.domain.favorites.FavoritesRepository
@@ -1095,10 +1095,10 @@ index 0000000..f5eb7ab
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..8035947
+index 0000000..e178047
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,56 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Intent
@@ -1106,8 +1106,8 @@ index 0000000..8035947
 +import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchExecutor
 +import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
 +import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
-+import kotlin.concurrent.thread
 +import javax.inject.Inject
++import kotlin.concurrent.thread
 +
 +enum class ShizukuState {
 +    UNSUPPORTED,
@@ -1115,7 +1115,6 @@ index 0000000..8035947
 +    DENIED,
 +    GRANTED,
 +}
-+
 +/**
 + * Shizuku-backed activity launcher. It sends an argument vector to `am` directly and never
 + * invokes `sh -c`, so component names and extras cannot become shell syntax.
@@ -1158,7 +1157,7 @@ index 0000000..8035947
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt
 new file mode 100644
-index 0000000..fb20493
+index 0000000..9e7d274
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt
 @@ -0,0 +1,103 @@
@@ -1168,8 +1167,8 @@ index 0000000..fb20493
 +import android.os.Build
 +import rikka.shizuku.Shizuku
 +import java.util.concurrent.atomic.AtomicBoolean
-+import kotlin.concurrent.thread
 +import javax.inject.Inject
++import kotlin.concurrent.thread
 +
 +data class ShizukuCommandResult(
 +    val exitCode: Int,

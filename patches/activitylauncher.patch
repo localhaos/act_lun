@@ -23,14 +23,14 @@ index 68a54b7..3cea6f8 100644
      val roomVersion = "2.6.1"
      implementation("androidx.room:room-runtime:$roomVersion")
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index b1e2f6a..7a9651f 100644
+index b1e2f6a..3e1a2f1 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -2,10 +2,13 @@
  <manifest xmlns:android="http://schemas.android.com/apk/res/android"
      xmlns:tools="http://schemas.android.com/tools">
  
-+    <uses-sdk tools:overrideLibrary="rikka.shizuku.provider" />
++    <uses-sdk tools:overrideLibrary="rikka.shizuku.provider,rikka.shizuku.api" />
 +
      <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
      <uses-permission
@@ -357,7 +357,7 @@ index 508ab02..ae1b569 100644
 +        app:showAsAction="never" />
  </menu>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 4893048..fafe1f8 100644
+index 4893048..91db14d 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -11,6 +11,10 @@
@@ -377,7 +377,7 @@ index 4893048..fafe1f8 100644
      <string name="error_invalid_icon_resource" comment="Error message for invalid or non-existent icon resource">Error: invalid icon resource</string>
 +    <string name="error_shizuku_permission">Shizuku permission was not granted.</string>
 +    <string name="error_shizuku_not_running">Shizuku is not running.</string>
-+    <string name="error_shizuku_unsupported">Shizuku+ requires Android 6.0 or newer.</string>
++    <string name="error_shizuku_unsupported">Shizuku+ requires Android 7.0 or newer.</string>
      <string name="error_verbose_pin_shortcut" comment="Error message when the device launcher does not support pinning shortcuts">Current launcher does not support "PinShortcut". Unable to create shortcut.</string>
      <string name="exception_invalid_component_name" comment="Error message for dangerous or invalid component names. %s is the problematic component">Invalid or potentially harmful component name: %s</string>
      <string name="filter_hint" comment="Hint text in the filter search input field">package/action</string>
@@ -920,7 +920,7 @@ index 0000000..f5eb7ab
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..97d449c
+index 0000000..4c3cd93
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 @@ -0,0 +1,121 @@
@@ -951,7 +951,7 @@ index 0000000..97d449c
 +class ShizukuActivityLaunchExecutor @Inject constructor() : ActivityLaunchExecutor {
 +    override val backend: ActivityLaunchBackend = ActivityLaunchBackend.SHIZUKU_PLUS
 +
-+    override fun isAvailable(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
++    override fun isAvailable(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
 +
 +    fun state(): ShizukuState {
 +        if (!isAvailable()) return ShizukuState.UNSUPPORTED
@@ -1000,7 +1000,7 @@ index 0000000..97d449c
 +
 +    override fun launch(intent: Intent): ActivityLaunchResult {
 +        if (!isAvailable()) {
-+            return ActivityLaunchResult(false, "Shizuku wymaga Androida 6.0 lub nowszego")
++            return ActivityLaunchResult(false, "Shizuku wymaga Androida 7.0 lub nowszego")
 +        }
 +        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
 +            return ActivityLaunchResult(false, "Usługa Shizuku nie działa")
@@ -1372,9 +1372,19 @@ index 0000000..910bf27
 +</LinearLayout>
 diff --git a/app/src/main/res/values-v23/bools.xml b/app/src/main/res/values-v23/bools.xml
 new file mode 100644
-index 0000000..63e4e9e
+index 0000000..bae41bc
 --- /dev/null
 +++ b/app/src/main/res/values-v23/bools.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <bool name="shizuku_provider_enabled">false</bool>
++</resources>
+diff --git a/app/src/main/res/values-v24/bools.xml b/app/src/main/res/values-v24/bools.xml
+new file mode 100644
+index 0000000..63e4e9e
+--- /dev/null
++++ b/app/src/main/res/values-v24/bools.xml
 @@ -0,0 +1,4 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<resources>

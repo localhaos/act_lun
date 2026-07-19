@@ -99,27 +99,25 @@ index b1e2f6a..c7a932e 100644
                  <action android:name="android.intent.action.PACKAGE_ADDED" />
                  <action android:name="android.intent.action.PACKAGE_REPLACED" />
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/app/di/DatabaseModule.kt b/app/src/main/java/de/szalkowski/activitylauncher/app/di/DatabaseModule.kt
-index 8029aa9..9e25c17 100644
+index 8029aa9..03cdd94 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/app/di/DatabaseModule.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/app/di/DatabaseModule.kt
-@@ -1,7 +1,9 @@
- package de.szalkowski.activitylauncher.app.di
+@@ -2,12 +2,15 @@ package de.szalkowski.activitylauncher.app.di
  
  import android.content.Context
-+import androidx.room.migration.Migration
  import androidx.room.Room
++import androidx.room.migration.Migration
 +import androidx.sqlite.db.SupportSQLiteDatabase
  import dagger.Module
  import dagger.Provides
  import dagger.hilt.InstallIn
-@@ -9,6 +11,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
+ import dagger.hilt.android.qualifiers.ApplicationContext
  import dagger.hilt.components.SingletonComponent
  import de.szalkowski.activitylauncher.data.database.AppDatabase
- import de.szalkowski.activitylauncher.data.database.PackageDao
 +import de.szalkowski.activitylauncher.data.database.LaunchMethodDao
+ import de.szalkowski.activitylauncher.data.database.PackageDao
  import javax.inject.Singleton
  
- @Module
 @@ -21,11 +24,44 @@ object DatabaseModule {
              context,
              AppDatabase::class.java,

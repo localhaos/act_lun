@@ -1,5 +1,5 @@
-Cloning into '/tmp/activitylauncher-v8-verify-admin'...
-122431 /tmp/activitylauncher-v8.patch
+Cloning into '/tmp/activitylauncher-v8-verify-admin2'...
+122457 /tmp/activitylauncher-v8.patch
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index 68a54b7..c13a919 100644
 --- a/app/build.gradle.kts
@@ -381,7 +381,7 @@ index 8f097b8..44096b2 100644
          } else {
              activityLauncher.launchActivity(request)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
-index 6251a88..8a485a3 100644
+index 6251a88..bf8548d 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 @@ -1,6 +1,7 @@
@@ -408,8 +408,8 @@ index 6251a88..8a485a3 100644
  import de.szalkowski.activitylauncher.databinding.FragmentActivityDetailsBinding
  import de.szalkowski.activitylauncher.domain.external.ReviewRequester
 +import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
-+import de.szalkowski.activitylauncher.entrypoint.AuditActivity
 +import de.szalkowski.activitylauncher.entrypoint.ActivityLaunchService
++import de.szalkowski.activitylauncher.entrypoint.AuditActivity
  import de.szalkowski.activitylauncher.presentation.common.IconPickerDialogFragment
  import de.szalkowski.activitylauncher.presentation.common.PluginChooserDialogFragment
 +import kotlinx.coroutines.Dispatchers
@@ -697,7 +697,7 @@ index 7b6daa8..8395a6b 100644
          val info = getEditedActivityInfo()
          shareActivityUseCase(info.componentName)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt
-index 36e7d3c..18534ca 100644
+index 36e7d3c..8be82f9 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt
 @@ -1,5 +1,7 @@
@@ -708,14 +708,14 @@ index 36e7d3c..18534ca 100644
  import android.content.Intent
  import android.content.SharedPreferences
  import android.os.Bundle
-@@ -12,6 +14,7 @@ import de.szalkowski.activitylauncher.R
+@@ -11,6 +13,7 @@ import dagger.hilt.android.AndroidEntryPoint
+ import de.szalkowski.activitylauncher.R
  import de.szalkowski.activitylauncher.domain.packages.PackageRepository
  import de.szalkowski.activitylauncher.domain.settings.SettingsRepository
- import de.szalkowski.activitylauncher.entrypoint.MainActivity
 +import de.szalkowski.activitylauncher.entrypoint.ActivityLauncherDeviceAdminReceiver
+ import de.szalkowski.activitylauncher.entrypoint.MainActivity
  import javax.inject.Inject
  
- @AndroidEntryPoint
 @@ -52,6 +55,20 @@ class SettingsFragment : PreferenceFragmentCompat() {
          val hidePrivate: SwitchPreferenceCompat = findPreference("hide_private")!!
          val theme: ListPreference = findPreference("theme")!!

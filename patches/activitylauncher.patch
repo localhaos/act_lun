@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 68a54b7..4cdb55e 100644
+index 68a54b7..5288529 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -7,6 +7,17 @@ plugins {
@@ -33,7 +33,12 @@ index 68a54b7..4cdb55e 100644
  
          vectorDrawables.useSupportLibrary = true
          testInstrumentationRunner = "de.szalkowski.activitylauncher.HiltTestRunner"
-@@ -93,6 +106,11 @@ android {
+@@ -89,10 +102,16 @@ android {
+         }
+     }
+     buildFeatures {
++        aidl = true
+         viewBinding = true
          buildConfig = true
          resValues = true
      }
@@ -45,7 +50,7 @@ index 68a54b7..4cdb55e 100644
      testOptions {
          unitTests.isReturnDefaultValues = true
      }
-@@ -185,6 +203,10 @@ tasks.named("preBuild") {
+@@ -185,6 +204,10 @@ tasks.named("preBuild") {
  }
  
  dependencies {
@@ -56,7 +61,7 @@ index 68a54b7..4cdb55e 100644
      implementation("androidx.core:core-ktx:1.12.0")
      implementation("androidx.appcompat:appcompat:1.6.1")
      "ossImplementation"("androidx.multidex:multidex:2.0.1")
-@@ -195,6 +217,8 @@ dependencies {
+@@ -195,6 +218,8 @@ dependencies {
      implementation("androidx.navigation:navigation-ui-ktx:2.7.7")
      implementation("androidx.preference:preference-ktx:1.2.1")
      implementation("com.google.dagger:hilt-android:2.59.2")
@@ -826,7 +831,7 @@ index 0d6c886..d25024e 100644
          if (packageRepository.isLoaded) {
              navController.navigate(R.id.PackageListFragment)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
-index 6251a88..1195eaf 100644
+index 6251a88..abc086c 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 @@ -1,6 +1,7 @@
@@ -942,7 +947,7 @@ index 6251a88..1195eaf 100644
              }
          }
  
-@@ -202,16 +235,43 @@ class ActivityDetailsFragment : Fragment() {
+@@ -202,16 +235,49 @@ class ActivityDetailsFragment : Fragment() {
          }
  
          binding.btLaunch.setOnClickListener {
@@ -974,7 +979,13 @@ index 6251a88..1195eaf 100644
 +                        } else {
 +                            getString(
 +                                R.string.launch_methods_test_failed,
-+                                attempts.joinToString { it.backend.displayName },
++                                attempts.joinToString(" | ") { attempt ->
++                                    val detail = attempt.message
++                                        ?.replace('\n', ' ')
++                                        ?.take(MAX_LAUNCH_ERROR_CHARS)
++                                    listOfNotNull(attempt.backend.displayName, detail)
++                                        .joinToString(": ")
++                                },
 +                            )
 +                        }
 +                    },
@@ -996,7 +1007,7 @@ index 6251a88..1195eaf 100644
          }
  
          binding.btShareShortcut.setOnClickListener {
-@@ -235,4 +295,16 @@ class ActivityDetailsFragment : Fragment() {
+@@ -235,4 +301,20 @@ class ActivityDetailsFragment : Fragment() {
              binding.btFavorite.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_favorite_border, 0, 0, 0)
          }
      }
@@ -1012,16 +1023,21 @@ index 6251a88..1195eaf 100644
 +            .setPositiveButton(actionRes) { _, _ -> viewModel.setActivityEnabled(enabled) }
 +            .show()
 +    }
++
++    private companion object {
++        const val MAX_LAUNCH_ERROR_CHARS = 180
++    }
  }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
-index 7b6daa8..a44f73a 100644
+index 7b6daa8..a605e6b 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
-@@ -10,8 +10,13 @@ import androidx.lifecycle.viewModelScope
+@@ -10,8 +10,14 @@ import androidx.lifecycle.viewModelScope
  import dagger.hilt.android.lifecycle.HiltViewModel
  import de.szalkowski.activitylauncher.R
  import de.szalkowski.activitylauncher.core.util.getActivityIntent
 +import de.szalkowski.activitylauncher.data.launcher.PackageStateChangeResult
++import de.szalkowski.activitylauncher.data.launcher.RootPackageStateExecutor
 +import de.szalkowski.activitylauncher.data.launcher.ShizukuActivityLaunchExecutor
 +import de.szalkowski.activitylauncher.data.launcher.ShizukuPackageStateExecutor
 +import de.szalkowski.activitylauncher.data.launcher.ShizukuState
@@ -1031,7 +1047,7 @@ index 7b6daa8..a44f73a 100644
  import de.szalkowski.activitylauncher.domain.model.LaunchRequest
  import de.szalkowski.activitylauncher.domain.model.MyActivityInfo
  import de.szalkowski.activitylauncher.domain.model.PluginInfo
-@@ -23,6 +28,7 @@ import de.szalkowski.activitylauncher.domain.usecase.favorites.ToggleFavoriteUse
+@@ -23,6 +29,7 @@ import de.szalkowski.activitylauncher.domain.usecase.favorites.ToggleFavoriteUse
  import de.szalkowski.activitylauncher.domain.usecase.launcher.CreateShortcutUseCase
  import de.szalkowski.activitylauncher.domain.usecase.launcher.GetActivityIconUseCase
  import de.szalkowski.activitylauncher.domain.usecase.launcher.LaunchActivityUseCase
@@ -1039,7 +1055,7 @@ index 7b6daa8..a44f73a 100644
  import kotlinx.coroutines.FlowPreview
  import kotlinx.coroutines.flow.MutableSharedFlow
  import kotlinx.coroutines.flow.MutableStateFlow
-@@ -34,13 +40,14 @@ import kotlinx.coroutines.flow.collectLatest
+@@ -34,13 +41,14 @@ import kotlinx.coroutines.flow.collectLatest
  import kotlinx.coroutines.flow.combine
  import kotlinx.coroutines.flow.debounce
  import kotlinx.coroutines.flow.filter
@@ -1055,16 +1071,17 @@ index 7b6daa8..a44f73a 100644
      private val favoritesRepository: FavoritesRepository,
      private val launchActivityUseCase: LaunchActivityUseCase,
      private val createShortcutUseCase: CreateShortcutUseCase,
-@@ -50,6 +57,8 @@ class ActivityDetailsViewModel @Inject constructor(
+@@ -50,6 +58,9 @@ class ActivityDetailsViewModel @Inject constructor(
      private val iconLoader: IconLoader,
      val settingsRepository: SettingsRepository,
      savedStateHandle: SavedStateHandle,
 +    private val shizukuExecutor: ShizukuActivityLaunchExecutor = ShizukuActivityLaunchExecutor(),
 +    private val packageStateExecutor: ShizukuPackageStateExecutor = ShizukuPackageStateExecutor(),
++    private val rootPackageStateExecutor: RootPackageStateExecutor = RootPackageStateExecutor(),
  ) : ViewModel() {
  
      private val componentName: ComponentName = savedStateHandle.get<ComponentName>("activityComponentName")
-@@ -58,6 +67,9 @@ class ActivityDetailsViewModel @Inject constructor(
+@@ -58,6 +69,9 @@ class ActivityDetailsViewModel @Inject constructor(
      private val _activityInfo = MutableStateFlow<MyActivityInfo?>(null)
      val activityInfo: StateFlow<MyActivityInfo?> = _activityInfo.asStateFlow()
  
@@ -1074,7 +1091,7 @@ index 7b6daa8..a44f73a 100644
      private val _isFavorite = MutableStateFlow(false)
      val isFavorite: StateFlow<Boolean> = _isFavorite.asStateFlow()
  
-@@ -77,6 +89,10 @@ class ActivityDetailsViewModel @Inject constructor(
+@@ -77,6 +91,10 @@ class ActivityDetailsViewModel @Inject constructor(
          pkg.isNotBlank() && cls.isNotBlank()
      }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
  
@@ -1085,7 +1102,7 @@ index 7b6daa8..a44f73a 100644
      val canCreateShortcut: StateFlow<Boolean> =
          combine(_editedName, _editedPackage, _editedClass) { name, pkg, cls ->
              name.isNotBlank() && pkg.isNotBlank() && cls.isNotBlank()
-@@ -117,6 +133,9 @@ class ActivityDetailsViewModel @Inject constructor(
+@@ -117,6 +135,9 @@ class ActivityDetailsViewModel @Inject constructor(
      private val _errorMessage = MutableSharedFlow<Int>()
      val errorMessage = _errorMessage.asSharedFlow()
  
@@ -1095,7 +1112,7 @@ index 7b6daa8..a44f73a 100644
      init {
          setupIconErrorDebounce()
  
-@@ -216,6 +235,82 @@ class ActivityDetailsViewModel @Inject constructor(
+@@ -216,6 +237,107 @@ class ActivityDetailsViewModel @Inject constructor(
          launchActivityUseCase(request)
      }
  
@@ -1143,30 +1160,55 @@ index 7b6daa8..a44f73a 100644
 +    fun setActivityEnabled(enabled: Boolean) {
 +        val target = getEditedActivityInfo().componentName
 +        when (shizukuExecutor.state()) {
-+            ShizukuState.GRANTED -> executeActivityStateChange(target, enabled)
++            ShizukuState.GRANTED -> executeActivityStateChange(target, enabled, useShizuku = true)
 +            ShizukuState.DENIED -> {
-+                shizukuExecutor.requestPermission { granted ->
-+                    viewModelScope.launch {
-+                        if (granted) {
-+                            executeActivityStateChange(target, enabled)
-+                        } else {
-+                            _errorMessage.emit(R.string.error_shizuku_permission)
++                if (rootPackageStateExecutor.isAvailable()) {
++                    executeActivityStateChange(target, enabled, useShizuku = false)
++                } else {
++                    shizukuExecutor.requestPermission { granted ->
++                        viewModelScope.launch {
++                            if (granted) {
++                                executeActivityStateChange(target, enabled, useShizuku = true)
++                            } else {
++                                _errorMessage.emit(R.string.error_shizuku_permission)
++                            }
 +                        }
 +                    }
 +                }
 +            }
 +            ShizukuState.STOPPED -> viewModelScope.launch {
-+                _errorMessage.emit(R.string.error_shizuku_not_running)
++                if (rootPackageStateExecutor.isAvailable()) {
++                    executeActivityStateChange(target, enabled, useShizuku = false)
++                } else {
++                    _errorMessage.emit(R.string.error_shizuku_not_running)
++                }
 +            }
 +            ShizukuState.UNSUPPORTED -> viewModelScope.launch {
-+                _errorMessage.emit(R.string.error_shizuku_unsupported)
++                if (rootPackageStateExecutor.isAvailable()) {
++                    executeActivityStateChange(target, enabled, useShizuku = false)
++                } else {
++                    _errorMessage.emit(R.string.error_shizuku_unsupported)
++                }
 +            }
 +        }
 +    }
 +
-+    private fun executeActivityStateChange(componentName: ComponentName, enabled: Boolean) {
++    private fun executeActivityStateChange(
++        componentName: ComponentName,
++        enabled: Boolean,
++        useShizuku: Boolean,
++    ) {
 +        viewModelScope.launch(Dispatchers.IO) {
-+            val result = packageStateExecutor.setActivityEnabled(componentName, enabled)
++            val primary = if (useShizuku) {
++                packageStateExecutor.setActivityEnabled(componentName, enabled)
++            } else {
++                rootPackageStateExecutor.setActivityEnabled(componentName, enabled)
++            }
++            val result = if (useShizuku && !primary.success && rootPackageStateExecutor.isAvailable()) {
++                rootPackageStateExecutor.setActivityEnabled(componentName, enabled)
++            } else {
++                primary
++            }
 +            if (result.success) {
 +                _isActivityEnabled.value = enabled
 +                packageRepository.invalidate()
@@ -1285,7 +1327,7 @@ index 73377c5..0181d2d 100644
          binding.rvActivities.adapter = activityListAdapter
      }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityListViewModel.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityListViewModel.kt
-index aa9c43b..bfc0ddb 100644
+index aa9c43b..2baf343 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityListViewModel.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityListViewModel.kt
 @@ -4,13 +4,21 @@ import androidx.lifecycle.SavedStateHandle
@@ -1330,7 +1372,7 @@ index aa9c43b..bfc0ddb 100644
      private var allPackageActivities: PackageActivities? = null
      private var combinedActivities: List<MyActivityInfo> = emptyList()
      private var currentQuery: String = ""
-@@ -46,12 +60,91 @@ class ActivityListViewModel @Inject constructor(
+@@ -46,12 +60,96 @@ class ActivityListViewModel @Inject constructor(
              val result = withContext(Dispatchers.Default) {
                  packageRepository.getActivities(packageName)
              }
@@ -1382,10 +1424,15 @@ index aa9c43b..bfc0ddb 100644
 +    private fun executeEnable(activity: MyActivityInfo, useShizuku: Boolean) {
 +        viewModelScope.launch {
 +            val commandResult = withContext(Dispatchers.IO) {
-+                if (useShizuku) {
++                val primary = if (useShizuku) {
 +                    shizukuPackageStateExecutor.setActivityEnabled(activity.componentName, true)
 +                } else {
 +                    rootPackageStateExecutor.setActivityEnabled(activity.componentName, true)
++                }
++                if (useShizuku && !primary.success && rootPackageStateExecutor.isAvailable()) {
++                    rootPackageStateExecutor.setActivityEnabled(activity.componentName, true)
++                } else {
++                    primary
 +                }
 +            }
 +            val enabled = commandResult.success && withContext(Dispatchers.IO) {
@@ -1847,24 +1894,27 @@ index ef6bfdd..19c8569 100644
 +include(":rootlaunchplugin")
 diff --git a/ADVANCED_EXECUTORS.md b/ADVANCED_EXECUTORS.md
 new file mode 100644
-index 0000000..f2e1595
+index 0000000..df855d8
 --- /dev/null
 +++ b/ADVANCED_EXECUTORS.md
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,78 @@
 +# Advanced executors and APK audit
 +
 +This fork adds six explicit activity-launch backends:
 +
 +- `DEFAULT` — normal `Context.startActivity()` behavior.
-+- `SHIZUKU_PLUS` — sends an argument vector to `/system/bin/am` through the user-approved
-+  Shizuku process. No `sh -c`, hidden API bypass, assistant hijacking, or automatic permission
++- `SHIZUKU_PLUS` — sends an argument vector to `/system/bin/am` through an official,
++  user-approved Shizuku UserService. It does not reflect into the private/deprecated
++  `Shizuku.newProcess` method. No hidden API bypass, assistant hijacking, or automatic permission
 +  granting is used.
 +- `ROOT_PLUGIN` — sends an explicit intent URI to the separately installed, same-signature
 +  ActivityLauncher Root Plugin. The host verifies both the signature permission and Android
 +  signing certificate before selecting it automatically.
-+- `ROOT_SU` — invokes an already-installed root manager as `su 0 -- /system/bin/am ...` after
-+  the adaptive methods have failed. If direct execution fails, it may retry through the device's
-+  own allow-listed `/system/bin/toybox env`; it does not install, obtain, or hide root access.
++- `ROOT_SU` — invokes an already-installed root manager using compatible direct `su` argument
++  variants. As a final compatibility fallback it can use `su -c`, but every argument is
++  shell-quoted and the executable remains restricted to `/system/bin/am` or `/system/bin/pm`.
++  It may also retry through the device's own allow-listed `/system/bin/toybox env`; it does not
++  install, obtain, or hide root access.
 +- `JVM` — starts the same non-privileged command through `Runtime.exec()`.
 +- `JNI_NATIVE` — starts it through the bundled `libactivitylauncher_worker.so`; the JNI worker
 +  accepts only `/system/bin/am` and an argument vector, then uses `fork`/`execv`. It does not
@@ -1875,6 +1925,10 @@ index 0000000..f2e1595
 +corresponding user authorization. The JNI worker is built by the app's CMake/NDK configuration
 +and is packaged per Android ABI. Shizuku and root executors now return the command exit status
 +and error output so a Knox permission denial is not reported as a false success.
++The adaptive launcher detects non-exported or permission-protected activities (including many
++Samsung IMS settings screens) and tries root-capable backends before ordinary app-context
++launching. Android or Samsung checks performed inside the target activity still cannot be
++bypassed generically.
 +
 +## Review of `localhaos/testjne`
 +
@@ -1924,10 +1978,10 @@ index 0000000..f2e1595
 +| `ld-android.so` | Android dynamic loader, not an application library. |
 diff --git a/SIGNED_PLUGIN_API.md b/SIGNED_PLUGIN_API.md
 new file mode 100644
-index 0000000..7be453e
+index 0000000..58f4681
 --- /dev/null
 +++ b/SIGNED_PLUGIN_API.md
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,28 @@
 +# Signed plugin API
 +
 +Activity Launcher supports two plugin paths:
@@ -1952,7 +2006,25 @@ index 0000000..7be453e
 +The `rootlaunchplugin` module is the reference same-signature implementation.
 +The CI workflow builds it as a separate APK and publishes it beside the host
 +APK. Install the host first and then the matching plugin build; the adaptive
-+launch button detects it through the signed intent contract.
++launch button detects it through the signed intent contract. Contract version
++2 includes an Android `ResultReceiver`, so the host waits for the real root
++command result instead of treating delivery to the plugin as a successful
++activity launch.
+diff --git a/app/src/main/aidl/de/szalkowski/activitylauncher/data/launcher/IShizukuCommandService.aidl b/app/src/main/aidl/de/szalkowski/activitylauncher/data/launcher/IShizukuCommandService.aidl
+new file mode 100644
+index 0000000..71302df
+--- /dev/null
++++ b/app/src/main/aidl/de/szalkowski/activitylauncher/data/launcher/IShizukuCommandService.aidl
+@@ -0,0 +1,9 @@
++package de.szalkowski.activitylauncher.data.launcher;
++
++import android.os.Bundle;
++
++interface IShizukuCommandService {
++    void destroy() = 16777114;
++
++    Bundle execute(in String[] command) = 1;
++}
 diff --git a/app/src/main/cpp/CMakeLists.txt b/app/src/main/cpp/CMakeLists.txt
 new file mode 100644
 index 0000000..2e4867c
@@ -2257,10 +2329,10 @@ index 0000000..b237691
 +}  // namespace activitylauncher
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt b/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt
 new file mode 100644
-index 0000000..88fe476
+index 0000000..9228234
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,76 @@
 +package de.szalkowski.activitylauncher.core.util
 +
 +import android.content.Intent
@@ -2276,7 +2348,17 @@ index 0000000..88fe476
 +
 +    fun buildStartCommand(intent: Intent): List<String> {
 +        val component = requireNotNull(intent.component) { "An explicit component is required" }
-+        val command = mutableListOf(ACTIVITY_MANAGER, "start")
++        val command = mutableListOf(
++            ACTIVITY_MANAGER,
++            "start",
++            "-W",
++            "--user",
++            "current",
++        )
++
++        if (intent.flags != 0) {
++            command += listOf("-f", "0x${Integer.toHexString(intent.flags)}")
++        }
 +
 +        intent.action?.takeIf { it.isNotBlank() }?.let {
 +            command += listOf("-a", it)
@@ -2885,14 +2967,17 @@ index 0000000..8754a3b
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt
 new file mode 100644
-index 0000000..2e7efd8
+index 0000000..e2678ea
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,145 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
++import android.content.ComponentName
 +import android.content.Context
 +import android.content.Intent
++import android.content.pm.ActivityInfo
++import android.content.pm.PackageManager
 +import dagger.hilt.android.qualifiers.ApplicationContext
 +import de.szalkowski.activitylauncher.data.database.LaunchMethodDao
 +import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchExecutor
@@ -2922,15 +3007,43 @@ index 0000000..2e7efd8
 +        val component = requireNotNull(intent.component) { "An explicit component is required" }
 +        val packageName = component.packageName
 +        val className = component.className
++        val activityInfo = getActivityInfo(component)
++        if (activityInfo != null && !isComponentEnabled(component, activityInfo)) {
++            return@withContext listOf(
++                ActivityLaunchMethodAttempt(
++                    ActivityLaunchBackend.DEFAULT,
++                    false,
++                    "Aktywność jest wyłączona. Włącz ją przełącznikiem i spróbuj ponownie.",
++                ),
++            )
++        }
++
 +        val history = launchMethodDao.getHistory(packageName, className).associateBy { it.backend }
-+        val defaultOrder = listOf(
-+            ActivityLaunchBackend.DEFAULT,
-+            ActivityLaunchBackend.SHIZUKU_PLUS,
-+            ActivityLaunchBackend.ROOT_PLUGIN,
-+            ActivityLaunchBackend.JVM,
-+            ActivityLaunchBackend.JNI_NATIVE,
-+            ActivityLaunchBackend.ROOT_SU,
-+        )
++        val restricted = activityInfo?.let { !it.exported || !it.permission.isNullOrBlank() } == true
++        val defaultOrder = if (restricted) {
++            buildList {
++                if (shizukuExecutor.remoteUid() == ROOT_UID) {
++                    add(ActivityLaunchBackend.SHIZUKU_PLUS)
++                }
++                add(ActivityLaunchBackend.ROOT_SU)
++                add(ActivityLaunchBackend.ROOT_PLUGIN)
++                if (!contains(ActivityLaunchBackend.SHIZUKU_PLUS)) {
++                    add(ActivityLaunchBackend.SHIZUKU_PLUS)
++                }
++                add(ActivityLaunchBackend.DEFAULT)
++                add(ActivityLaunchBackend.JVM)
++                add(ActivityLaunchBackend.JNI_NATIVE)
++            }
++        } else {
++            listOf(
++                ActivityLaunchBackend.DEFAULT,
++                ActivityLaunchBackend.SHIZUKU_PLUS,
++                ActivityLaunchBackend.ROOT_PLUGIN,
++                ActivityLaunchBackend.JVM,
++                ActivityLaunchBackend.JNI_NATIVE,
++                ActivityLaunchBackend.ROOT_SU,
++            )
++        }
 +        val executors = mapOf<ActivityLaunchBackend, ActivityLaunchExecutor>(
 +            ActivityLaunchBackend.SHIZUKU_PLUS to shizukuExecutor,
 +            ActivityLaunchBackend.ROOT_PLUGIN to rootPluginExecutor,
@@ -2945,11 +3058,15 @@ index 0000000..2e7efd8
 +                else -> executors[backend]?.isAvailable() == true
 +            }
 +        }
-+        val candidates = available.filterNot { it == ActivityLaunchBackend.ROOT_SU }.sortedWith(
-+            compareByDescending<ActivityLaunchBackend> { history[it.name]?.successes ?: 0 }
-+                .thenByDescending { history[it.name]?.lastSuccessAt ?: 0L }
-+                .thenBy { defaultOrder.indexOf(it) },
-+        ) + available.filter { it == ActivityLaunchBackend.ROOT_SU }
++        val candidates = if (restricted) {
++            available
++        } else {
++            available.filterNot { it == ActivityLaunchBackend.ROOT_SU }.sortedWith(
++                compareByDescending<ActivityLaunchBackend> { history[it.name]?.successes ?: 0 }
++                    .thenByDescending { history[it.name]?.lastSuccessAt ?: 0L }
++                    .thenBy { defaultOrder.indexOf(it) },
++            ) + available.filter { it == ActivityLaunchBackend.ROOT_SU }
++        }
 +
 +        val attempts = mutableListOf<ActivityLaunchMethodAttempt>()
 +        for (backend in candidates) {
@@ -2976,6 +3093,27 @@ index 0000000..2e7efd8
 +        ActivityLaunchResult(true)
 +    }.getOrElse { error ->
 +        ActivityLaunchResult(false, error.message ?: error::class.java.simpleName)
++    }
++
++    @Suppress("DEPRECATION")
++    private fun getActivityInfo(component: ComponentName): ActivityInfo? = runCatching {
++        context.packageManager.getActivityInfo(component, PackageManager.GET_DISABLED_COMPONENTS)
++    }.getOrNull()
++
++    private fun isComponentEnabled(
++        component: ComponentName,
++        info: ActivityInfo,
++    ): Boolean = when (context.packageManager.getComponentEnabledSetting(component)) {
++        PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> info.applicationInfo.enabled
++        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
++        PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
++        PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED,
++        -> false
++        else -> info.enabled && info.applicationInfo.enabled
++    }
++
++    private companion object {
++        const val ROOT_UID = 0
 +    }
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/JvmActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/JvmActivityLaunchExecutor.kt
@@ -3212,10 +3350,10 @@ index 0000000..8c0ede4
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootCommandExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootCommandExecutor.kt
 new file mode 100644
-index 0000000..160f4dc
+index 0000000..93d5824
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootCommandExecutor.kt
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,116 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import java.io.File
@@ -3251,7 +3389,9 @@ index 0000000..160f4dc
 +        )
 +
 +        val strategies = buildList {
-+            add("direct" to (listOf(su, "0", "--") + command))
++            add("su-user-separator" to (listOf(su, "0", "--") + command))
++            add("su-user-direct" to (listOf(su, "0") + command))
++            add("su-command" to listOf(su, "-c", command.toShellCommand()))
 +            findToybox()?.let { toybox ->
 +                add("system-toybox" to (listOf(su, "0", "--", toybox, "env") + command))
 +            }
@@ -3305,6 +3445,10 @@ index 0000000..160f4dc
 +    private fun findSu(): String? = SU_CANDIDATES.firstOrNull { File(it).canExecute() }
 +
 +    private fun findToybox(): String? = TOYBOX_CANDIDATES.firstOrNull { File(it).canExecute() }
++
++    private fun List<String>.toShellCommand(): String = joinToString(" ") { argument ->
++        "'${argument.replace("'", "'\"'\"'")}'"
++    }
 +
 +    private companion object {
 +        const val ROOT_UNAVAILABLE = 126
@@ -3369,22 +3513,27 @@ index 0000000..b7215ec
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootPluginActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootPluginActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..964a7ed
+index 0000000..d881257
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootPluginActivityLaunchExecutor.kt
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,94 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.ComponentName
 +import android.content.Context
 +import android.content.Intent
 +import android.content.pm.PackageManager
++import android.os.Bundle
++import android.os.ResultReceiver
 +import dagger.hilt.android.qualifiers.ApplicationContext
 +import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchExecutor
 +import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
 +import de.szalkowski.activitylauncher.domain.launcher.ShortcutCreator
 +import de.szalkowski.activitylauncher.domain.launcher.SignedPluginContract
 +import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
++import java.util.concurrent.atomic.AtomicReference
 +import javax.inject.Inject
 +
 +/** Sends an explicit target to an installed, same-signature Root Activity Launcher plugin. */
@@ -3402,15 +3551,34 @@ index 0000000..964a7ed
 +            ?: return ActivityLaunchResult(false, "Signed Root Activity Launcher plugin is not installed")
 +
 +        return runCatching {
++            val completed = CountDownLatch(1)
++            val response = AtomicReference<ActivityLaunchResult>()
++            val receiver = object : ResultReceiver(null) {
++                override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
++                    response.set(
++                        ActivityLaunchResult(
++                            started = resultCode == SignedPluginContract.RESULT_STARTED,
++                            message = resultData
++                                ?.getString(SignedPluginContract.EXTRA_RESULT_MESSAGE),
++                        ),
++                    )
++                    completed.countDown()
++                }
++            }
 +            val pluginIntent = Intent(SignedPluginContract.ACTION_LAUNCH).apply {
 +                component = plugin
 +                putExtra(ShortcutCreator.INTENT_EXTRA_INTENT, intent.toUri(Intent.URI_INTENT_SCHEME))
 +                putExtra(SignedPluginContract.EXTRA_API_VERSION, SignedPluginContract.API_VERSION)
++                putExtra(SignedPluginContract.EXTRA_RESULT_RECEIVER, receiver)
 +                putExtra(EXTRA_TARGET_COMPONENT, target.flattenToString())
 +                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 +            }
 +            context.startActivity(pluginIntent)
-+            ActivityLaunchResult(true, "Sent to signed Root Activity Launcher plugin")
++            if (!completed.await(PLUGIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
++                ActivityLaunchResult(false, "Root plugin did not return a result")
++            } else {
++                response.get() ?: ActivityLaunchResult(false, "Root plugin returned an empty result")
++            }
 +        }.getOrElse { error ->
 +            ActivityLaunchResult(false, error.message ?: error::class.java.simpleName)
 +        }
@@ -3440,14 +3608,15 @@ index 0000000..964a7ed
 +    companion object {
 +        const val EXTRA_TARGET_COMPONENT = "activitylauncher.root_plugin_target"
 +        const val ROOT_PLUGIN_PACKAGE = "de.szalkowski.activitylauncher.rootplugin"
++        private const val PLUGIN_TIMEOUT_SECONDS = 45L
 +    }
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..63912dc
+index 0000000..389ae01
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,64 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Intent
@@ -3481,6 +3650,8 @@ index 0000000..63912dc
 +
 +    fun hasPermission(): Boolean = commandExecutor.hasPermission()
 +
++    fun remoteUid(): Int? = commandExecutor.remoteUid()
++
 +    fun requestPermission(callback: (Boolean) -> Unit) = commandExecutor.requestPermission(callback)
 +
 +    override fun launch(intent: Intent): ActivityLaunchResult {
@@ -3512,17 +3683,24 @@ index 0000000..63912dc
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt
 new file mode 100644
-index 0000000..9be1915
+index 0000000..23080bd
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,203 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
++import android.content.ComponentName
++import android.content.ServiceConnection
 +import android.content.pm.PackageManager
 +import android.os.Build
++import android.os.IBinder
++import de.szalkowski.activitylauncher.BuildConfig
 +import rikka.shizuku.Shizuku
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
 +import java.util.concurrent.atomic.AtomicBoolean
 +import javax.inject.Inject
++import javax.inject.Singleton
 +import kotlin.concurrent.thread
 +
 +data class ShizukuCommandResult(
@@ -3536,8 +3714,50 @@ index 0000000..9be1915
 +        get() = (stderr.ifBlank { stdout }).trim().ifBlank { null }
 +}
 +
-+/** Shared, non-shell command bridge for operations that explicitly require Shizuku. */
++/** Shared command bridge backed by the supported Shizuku UserService API. */
++@Singleton
 +class ShizukuCommandExecutor @Inject constructor() {
++    private val connectionLock = Any()
++
++    @Volatile
++    private var service: IShizukuCommandService? = null
++
++    @Volatile
++    private var binding = false
++
++    @Volatile
++    private var connectionLatch = CountDownLatch(0)
++
++    private val userServiceArgs by lazy {
++        Shizuku.UserServiceArgs(
++            ComponentName(BuildConfig.APPLICATION_ID, ShizukuCommandUserService::class.java.name),
++        )
++            .daemon(false)
++            .processNameSuffix("activity_launcher_worker")
++            .debuggable(BuildConfig.DEBUG)
++            .version(BuildConfig.VERSION_CODE)
++    }
++
++    private val serviceConnection = object : ServiceConnection {
++        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
++            val connected = IShizukuCommandService.Stub.asInterface(binder)
++                .takeIf { binder.pingBinder() }
++            synchronized(connectionLock) {
++                service = connected
++                binding = false
++                connectionLatch.countDown()
++            }
++        }
++
++        override fun onServiceDisconnected(name: ComponentName) {
++            synchronized(connectionLock) {
++                service = null
++                binding = false
++                connectionLatch.countDown()
++            }
++        }
++    }
++
 +    fun isAvailable(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
 +
 +    fun state(): ShizukuState {
@@ -3545,10 +3765,18 @@ index 0000000..9be1915
 +        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
 +            return ShizukuState.STOPPED
 +        }
-+        if (runCatching { Shizuku.isPreV11() }.getOrDefault(true)) {
++        val unsupported = runCatching {
++            Shizuku.isPreV11() || Shizuku.getVersion() < MIN_USER_SERVICE_VERSION
++        }.getOrDefault(true)
++        if (unsupported) {
 +            return ShizukuState.UNSUPPORTED
 +        }
 +        return if (hasPermission()) ShizukuState.GRANTED else ShizukuState.DENIED
++    }
++
++    fun remoteUid(): Int? {
++        if (state() != ShizukuState.GRANTED) return null
++        return runCatching { Shizuku.getUid() }.getOrNull()?.takeIf { it >= 0 }
 +    }
 +
 +    fun hasPermission(): Boolean {
@@ -3566,6 +3794,7 @@ index 0000000..9be1915
 +            return
 +        }
 +        if (hasPermission()) {
++            prepare()
 +            callback(true)
 +            return
 +        }
@@ -3579,7 +3808,9 @@ index 0000000..9be1915
 +            override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
 +                if (requestCode != REQUEST_CODE || !completed.compareAndSet(false, true)) return
 +                Shizuku.removeRequestPermissionResultListener(this)
-+                callback(grantResult == PackageManager.PERMISSION_GRANTED)
++                val granted = grantResult == PackageManager.PERMISSION_GRANTED
++                if (granted) prepare()
++                callback(granted)
 +            }
 +        }
 +
@@ -3592,38 +3823,234 @@ index 0000000..9be1915
 +        }
 +    }
 +
-+    fun execute(command: List<String>): ShizukuCommandResult {
-+        check(state() == ShizukuState.GRANTED) { "Shizuku permission is not available" }
-+        val process = newProcess(command)
-+        process.outputStream.close()
-+
-+        val stdout = StringBuilder()
-+        val stderr = StringBuilder()
-+        val stdoutReader = thread(start = true, isDaemon = true, name = "activitylauncher-shizuku-stdout") {
-+            process.inputStream.bufferedReader().use { stdout.append(it.readText()) }
++    fun prepare() {
++        if (state() != ShizukuState.GRANTED || service?.asBinder()?.isBinderAlive == true) return
++        thread(start = true, isDaemon = true, name = "activitylauncher-shizuku-prepare") {
++            runCatching { requireService() }
 +        }
-+        val stderrReader = thread(start = true, isDaemon = true, name = "activitylauncher-shizuku-stderr") {
-+            process.errorStream.bufferedReader().use { stderr.append(it.readText()) }
-+        }
-+        val exitCode = process.waitFor()
-+        stdoutReader.join()
-+        stderrReader.join()
-+        return ShizukuCommandResult(exitCode, stdout.toString(), stderr.toString())
 +    }
 +
-+    private fun newProcess(command: List<String>): Process {
++    fun execute(command: List<String>): ShizukuCommandResult {
++        check(state() == ShizukuState.GRANTED) { "Shizuku permission is not available" }
 +        require(command.isNotEmpty()) { "Command must not be empty" }
-+        val method = Shizuku::class.java.getMethod(
-+            "newProcess",
-+            Array<String>::class.java,
-+            Array<String>::class.java,
-+            String::class.java,
-+        )
-+        return method.invoke(null, command.toTypedArray(), null, null) as Process
++
++        val remote = requireService()
++        return runCatching {
++            val result = remote.execute(command.toTypedArray())
++            ShizukuCommandResult(
++                exitCode = result.getInt(ShizukuCommandUserService.RESULT_EXIT_CODE, PROCESS_FAILED),
++                stdout = result.getString(ShizukuCommandUserService.RESULT_STDOUT).orEmpty(),
++                stderr = result.getString(ShizukuCommandUserService.RESULT_STDERR).orEmpty(),
++            )
++        }.getOrElse { error ->
++            synchronized(connectionLock) {
++                service = null
++            }
++            throw error
++        }
++    }
++
++    private fun requireService(): IShizukuCommandService {
++        service?.takeIf { it.asBinder().isBinderAlive }?.let { return it }
++
++        var shouldBind = false
++        val latch = synchronized(connectionLock) {
++            service?.takeIf { it.asBinder().isBinderAlive }?.let { return it }
++            if (!binding) {
++                binding = true
++                connectionLatch = CountDownLatch(1)
++                shouldBind = true
++            }
++            connectionLatch
++        }
++
++        if (shouldBind) {
++            try {
++                Shizuku.bindUserService(userServiceArgs, serviceConnection)
++            } catch (error: Throwable) {
++                synchronized(connectionLock) {
++                    binding = false
++                    connectionLatch.countDown()
++                }
++                throw error
++            }
++        }
++
++        check(latch.await(CONNECTION_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
++            "Timed out while connecting to the Shizuku worker"
++        }
++        return service?.takeIf { it.asBinder().isBinderAlive }
++            ?: error("Shizuku worker did not return a live Binder")
 +    }
 +
 +    companion object {
 +        private const val REQUEST_CODE = 2407
++        private const val MIN_USER_SERVICE_VERSION = 10
++        private const val CONNECTION_TIMEOUT_SECONDS = 10L
++        private const val PROCESS_FAILED = 127
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandUserService.java b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandUserService.java
+new file mode 100644
+index 0000000..f1403f9
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandUserService.java
+@@ -0,0 +1,157 @@
++package de.szalkowski.activitylauncher.data.launcher;
++
++import android.content.Context;
++import android.os.Bundle;
++
++import androidx.annotation.Keep;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import java.util.Arrays;
++
++/** Isolated Shizuku UserService which executes only the app's allowlisted framework commands. */
++public final class ShizukuCommandUserService extends IShizukuCommandService.Stub {
++    public static final String RESULT_EXIT_CODE = "exit_code";
++    public static final String RESULT_STDOUT = "stdout";
++    public static final String RESULT_STDERR = "stderr";
++
++    private static final int INVALID_COMMAND = 126;
++    private static final int PROCESS_FAILED = 127;
++    private static final int PROCESS_TIMEOUT = 124;
++    private static final int MAX_ARGUMENT_COUNT = 128;
++    private static final int MAX_ARGUMENT_CHARS = 16_384;
++    private static final int MAX_TOTAL_ARGUMENT_CHARS = 65_536;
++    private static final int MAX_OUTPUT_CHARS = 16_384;
++    private static final long PROCESS_TIMEOUT_MILLIS = 20_000L;
++
++    @Keep
++    public ShizukuCommandUserService() {}
++
++    @Keep
++    public ShizukuCommandUserService(Context context) {}
++
++    @Override
++    public void destroy() {
++        System.exit(0);
++    }
++
++    @Override
++    public synchronized Bundle execute(String[] command) {
++        String validationError = validate(command);
++        if (validationError != null) {
++            return result(INVALID_COMMAND, "", validationError);
++        }
++
++        Process process = null;
++        try {
++            process = new ProcessBuilder(Arrays.asList(command)).redirectErrorStream(false).start();
++            process.getOutputStream().close();
++
++            BoundedStreamReader stdout = new BoundedStreamReader(process.getInputStream());
++            BoundedStreamReader stderr = new BoundedStreamReader(process.getErrorStream());
++            Thread stdoutThread = new Thread(stdout, "activitylauncher-shizuku-worker-stdout");
++            Thread stderrThread = new Thread(stderr, "activitylauncher-shizuku-worker-stderr");
++            stdoutThread.setDaemon(true);
++            stderrThread.setDaemon(true);
++            stdoutThread.start();
++            stderrThread.start();
++
++            int exitCode = waitFor(process);
++            stdoutThread.join(2_000L);
++            stderrThread.join(2_000L);
++            return result(exitCode, stdout.value(), stderr.value());
++        } catch (InterruptedException error) {
++            Thread.currentThread().interrupt();
++            return result(PROCESS_FAILED, "", "Shizuku worker interrupted");
++        } catch (Throwable error) {
++            String message = error.getMessage();
++            return result(
++                    PROCESS_FAILED,
++                    "",
++                    message == null ? error.getClass().getSimpleName() : message);
++        } finally {
++            if (process != null) {
++                process.destroy();
++            }
++        }
++    }
++
++    private static int waitFor(Process process) throws InterruptedException {
++        long deadline = System.currentTimeMillis() + PROCESS_TIMEOUT_MILLIS;
++        while (System.currentTimeMillis() < deadline) {
++            try {
++                return process.exitValue();
++            } catch (IllegalThreadStateException ignored) {
++                Thread.sleep(25L);
++            }
++        }
++        process.destroy();
++        return PROCESS_TIMEOUT;
++    }
++
++    private static String validate(String[] command) {
++        if (command == null || command.length < 2 || command.length > MAX_ARGUMENT_COUNT) {
++            return "Invalid Shizuku command length";
++        }
++        int totalChars = 0;
++        for (String argument : command) {
++            if (argument == null || argument.length() > MAX_ARGUMENT_CHARS) {
++                return "Invalid Shizuku command argument";
++            }
++            totalChars += argument.length();
++            if (totalChars > MAX_TOTAL_ARGUMENT_CHARS) {
++                return "Shizuku command is too large";
++            }
++        }
++
++        if ("/system/bin/am".equals(command[0])) {
++            return "start".equals(command[1]) ? null : "Unsupported activity-manager operation";
++        }
++        if ("/system/bin/pm".equals(command[0])) {
++            return "enable".equals(command[1]) || "disable-user".equals(command[1])
++                    ? null
++                    : "Unsupported package-manager operation";
++        }
++        return "Shizuku executable is not allowlisted";
++    }
++
++    private static Bundle result(int exitCode, String stdout, String stderr) {
++        Bundle bundle = new Bundle();
++        bundle.putInt(RESULT_EXIT_CODE, exitCode);
++        bundle.putString(RESULT_STDOUT, stdout);
++        bundle.putString(RESULT_STDERR, stderr);
++        return bundle;
++    }
++
++    private static final class BoundedStreamReader implements Runnable {
++        private final InputStream input;
++        private final StringBuilder output = new StringBuilder();
++
++        BoundedStreamReader(InputStream input) {
++            this.input = input;
++        }
++
++        @Override
++        public void run() {
++            try (InputStreamReader reader =
++                    new InputStreamReader(input, StandardCharsets.UTF_8)) {
++                char[] buffer = new char[1_024];
++                int count;
++                while ((count = reader.read(buffer)) >= 0) {
++                    int remaining = MAX_OUTPUT_CHARS - output.length();
++                    if (remaining > 0) {
++                        output.append(buffer, 0, Math.min(count, remaining));
++                    }
++                }
++            } catch (IOException ignored) {
++                // Process teardown can close a stream while it is being drained.
++            }
++        }
++
++        String value() {
++            return output.toString();
++        }
 +    }
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuPackageStateExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuPackageStateExecutor.kt
@@ -4047,18 +4474,22 @@ index 0000000..ad33d5c
 +)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/SignedPluginContract.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/SignedPluginContract.kt
 new file mode 100644
-index 0000000..5ea04b6
+index 0000000..018b27a
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/launcher/SignedPluginContract.kt
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,13 @@
 +package de.szalkowski.activitylauncher.domain.launcher
 +
 +/** Stable, signature-protected contract for first-party or same-signature plugins. */
 +object SignedPluginContract {
 +    const val ACTION_LAUNCH = "activitylauncher.intent.action.SIGNED_PLUGIN_LAUNCH"
 +    const val PERMISSION = "de.szalkowski.activitylauncher.permission.SIGNED_PLUGIN"
-+    const val API_VERSION = 1
++    const val API_VERSION = 2
 +    const val EXTRA_API_VERSION = "activitylauncher.plugin_api_version"
++    const val EXTRA_RESULT_RECEIVER = "activitylauncher.plugin_result_receiver"
++    const val EXTRA_RESULT_MESSAGE = "activitylauncher.plugin_result_message"
++    const val RESULT_STARTED = 1
++    const val RESULT_FAILED = 0
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt
 new file mode 100644
@@ -4560,10 +4991,10 @@ index 0000000..8b4c99b
 +</device-admin>
 diff --git a/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt
 new file mode 100644
-index 0000000..9385a55
+index 0000000..65b1543
 --- /dev/null
 +++ b/app/src/test/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilderTest.kt
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,47 @@
 +package de.szalkowski.activitylauncher.core.util
 +
 +import android.content.ComponentName
@@ -4594,6 +5025,7 @@ index 0000000..9385a55
 +        whenever(intent.type).thenReturn(null)
 +        whenever(intent.categories).thenReturn(null)
 +        whenever(intent.extras).thenReturn(extras)
++        whenever(intent.flags).thenReturn(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
 +
 +        val command = ActivityCommandBuilder.buildStartCommand(intent)
 +
@@ -4601,6 +5033,11 @@ index 0000000..9385a55
 +        assertTrue(command.contains("$(touch /data/local/tmp/should-not-run)"))
 +        assertTrue(command.contains("--es"))
 +        assertTrue(command.contains("--ez"))
++        assertTrue(command.contains("--user"))
++        assertTrue(command.contains("current"))
++        assertTrue(command.contains("-W"))
++        assertTrue(command.contains("-f"))
++        assertTrue(command.contains("0x10008000"))
 +        assertFalse(command.contains("sh"))
 +        assertFalse(command.contains("-c"))
 +    }
@@ -4914,16 +5351,17 @@ index 0000000..1969b4c
 +</manifest>
 diff --git a/rootlaunchplugin/src/main/java/de/szalkowski/activitylauncher/rootplugin/RootLaunchPluginActivity.java b/rootlaunchplugin/src/main/java/de/szalkowski/activitylauncher/rootplugin/RootLaunchPluginActivity.java
 new file mode 100644
-index 0000000..e568044
+index 0000000..f72a163
 --- /dev/null
 +++ b/rootlaunchplugin/src/main/java/de/szalkowski/activitylauncher/rootplugin/RootLaunchPluginActivity.java
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,222 @@
 +package de.szalkowski.activitylauncher.rootplugin;
 +
 +import android.app.Activity;
 +import android.content.ComponentName;
 +import android.content.Intent;
 +import android.os.Bundle;
++import android.os.ResultReceiver;
 +import android.widget.Toast;
 +
 +import java.io.BufferedReader;
@@ -4933,11 +5371,16 @@ index 0000000..e568044
 +import java.util.Arrays;
 +import java.util.List;
 +import java.util.regex.Pattern;
++import java.util.concurrent.atomic.AtomicBoolean;
 +
 +public final class RootLaunchPluginActivity extends Activity {
 +    private static final String EXTRA_INTENT = "intent";
 +    private static final String EXTRA_API_VERSION = "activitylauncher.plugin_api_version";
-+    private static final int SUPPORTED_API_VERSION = 1;
++    private static final String EXTRA_RESULT_RECEIVER = "activitylauncher.plugin_result_receiver";
++    private static final String EXTRA_RESULT_MESSAGE = "activitylauncher.plugin_result_message";
++    private static final int RESULT_FAILED = 0;
++    private static final int RESULT_STARTED = 1;
++    private static final int SUPPORTED_API_VERSION = 2;
 +    private static final int MAX_INTENT_URI_LENGTH = 16_384;
 +    private static final Pattern PACKAGE_NAME =
 +            Pattern.compile("[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*");
@@ -4954,10 +5397,16 @@ index 0000000..e568044
 +            "/system/xbin/toybox",
 +            "/vendor/bin/toybox");
 +
++    private final AtomicBoolean resultSent = new AtomicBoolean(false);
++    private ResultReceiver resultReceiver;
++
 +    @Override
 +    protected void onCreate(Bundle savedInstanceState) {
 +        super.onCreate(savedInstanceState);
 +        final Intent request = getIntent();
++        if (request != null) {
++            resultReceiver = request.getParcelableExtra(EXTRA_RESULT_RECEIVER);
++        }
 +        new Thread(() -> processRequest(request), "activitylauncher-root-plugin").start();
 +    }
 +
@@ -4982,6 +5431,13 @@ index 0000000..e568044
 +            List<String> command = new ArrayList<>();
 +            command.add("/system/bin/am");
 +            command.add("start");
++            command.add("-W");
++            command.add("--user");
++            command.add("current");
++            if (target.getFlags() != 0) {
++                command.add("-f");
++                command.add("0x" + Integer.toHexString(target.getFlags()));
++            }
 +            String action = target.getAction();
 +            if (action != null && ACTION_NAME.matcher(action).matches()) {
 +                command.add("-a");
@@ -4992,7 +5448,7 @@ index 0000000..e568044
 +
 +            CommandResult result = executeRoot(command);
 +            if (result.exitCode == 0) {
-+                finishWithToast(getString(R.string.launch_success, result.strategy));
++                finishWithToast(getString(R.string.launch_success, result.strategy), true);
 +            } else {
 +                String detail = result.output.isEmpty()
 +                        ? "exit " + result.exitCode
@@ -5012,9 +5468,17 @@ index 0000000..e568044
 +        }
 +
 +        List<Attempt> attempts = new ArrayList<>();
-+        List<String> direct = new ArrayList<>(Arrays.asList(su, "0", "--"));
++        List<String> withSeparator = new ArrayList<>(Arrays.asList(su, "0", "--"));
++        withSeparator.addAll(command);
++        attempts.add(new Attempt("su user separator", withSeparator));
++
++        List<String> direct = new ArrayList<>(Arrays.asList(su, "0"));
 +        direct.addAll(command);
-+        attempts.add(new Attempt("direct", direct));
++        attempts.add(new Attempt("su user direct", direct));
++
++        attempts.add(new Attempt(
++                "su command",
++                Arrays.asList(su, "-c", toShellCommand(command))));
 +
 +        String toybox = firstExecutable(TOYBOX_CANDIDATES);
 +        if (toybox != null) {
@@ -5064,11 +5528,27 @@ index 0000000..e568044
 +        return null;
 +    }
 +
-+    private void finishWithError(String detail) {
-+        finishWithToast(getString(R.string.launch_failed, detail));
++    private String toShellCommand(List<String> command) {
++        StringBuilder result = new StringBuilder();
++        for (String argument : command) {
++            if (result.length() > 0) result.append(' ');
++            result.append('\'')
++                    .append(argument.replace("'", "'\"'\"'"))
++                    .append('\'');
++        }
++        return result.toString();
 +    }
 +
-+    private void finishWithToast(String message) {
++    private void finishWithError(String detail) {
++        finishWithToast(getString(R.string.launch_failed, detail), false);
++    }
++
++    private void finishWithToast(String message, boolean started) {
++        if (resultReceiver != null && resultSent.compareAndSet(false, true)) {
++            Bundle result = new Bundle();
++            result.putString(EXTRA_RESULT_MESSAGE, message);
++            resultReceiver.send(started ? RESULT_STARTED : RESULT_FAILED, result);
++        }
 +        runOnUiThread(() -> {
 +            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
 +            finish();

@@ -731,8 +731,85 @@ index 8f097b8..44096b2 100644
              activityLauncherProxy.launchActivity(request)
          } else {
              activityLauncher.launchActivity(request)
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/MainActivity.kt b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/MainActivity.kt
+index 0d6c886..d25024e 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/MainActivity.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/entrypoint/MainActivity.kt
+@@ -6,6 +6,7 @@ import android.os.Bundle
+ import android.view.Menu
+ import android.view.MenuItem
+ import android.view.View
++import androidx.activity.result.contract.ActivityResultContracts
+ import androidx.appcompat.app.AppCompatActivity
+ import androidx.core.widget.addTextChangedListener
+ import androidx.navigation.NavController
+@@ -23,6 +24,7 @@ import com.google.android.material.textfield.TextInputEditText
+ import com.google.android.material.textfield.TextInputLayout
+ import dagger.hilt.android.AndroidEntryPoint
+ import de.szalkowski.activitylauncher.R
++import de.szalkowski.activitylauncher.data.permissions.StartupPermissionCoordinator
+ import de.szalkowski.activitylauncher.databinding.ActivityMainBinding
+ import de.szalkowski.activitylauncher.domain.external.AdManager
+ import de.szalkowski.activitylauncher.domain.external.AnalyticsLogger
+@@ -67,6 +69,14 @@ class MainActivity : AppCompatActivity(), ActionBarSearch {
+     @Inject
+     internal lateinit var calculateSupportReminderUseCase: CalculateSupportReminderUseCase
+ 
++    @Inject
++    internal lateinit var startupPermissionCoordinator: StartupPermissionCoordinator
++
++    private val runtimePermissionLauncher =
++        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
++            startupPermissionCoordinator.onRuntimePermissionRequestFinished()
++        }
++
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+ 
+@@ -77,10 +87,21 @@ class MainActivity : AppCompatActivity(), ActionBarSearch {
+         setSupportActionBar(toolbar)
+ 
+         settingsRepository.applyLocaleConfiguration(baseContext)
++        supportFragmentManager.setFragmentResultListener(
++            DisclaimerDialogFragment.REQUEST_KEY,
++            this,
++        ) { _, result ->
++            if (result.getBoolean(DisclaimerDialogFragment.RESULT_ACCEPTED)) {
++                startPermissionDiscovery()
++            }
++        }
+         if (!settingsRepository.disclaimerAccepted) {
+             DisclaimerDialogFragment().show(supportFragmentManager, "DisclaimerDialogFragment")
+-        } else if (calculateSupportReminderUseCase()) {
+-            PaidDialogFragment().show(supportFragmentManager, "PaidDialogFragment")
++        } else {
++            startPermissionDiscovery()
++            if (calculateSupportReminderUseCase()) {
++                PaidDialogFragment().show(supportFragmentManager, "PaidDialogFragment")
++            }
+         }
+ 
+         adManager.loadBanner(this, binding.adContainer)
+@@ -236,10 +257,17 @@ class MainActivity : AppCompatActivity(), ActionBarSearch {
+     }
+ 
+     override fun onDestroy() {
++        startupPermissionCoordinator.stop()
+         adManager.removeBanner(binding.adContainer)
+         super.onDestroy()
+     }
+ 
++    private fun startPermissionDiscovery() {
++        startupPermissionCoordinator.start { permissions ->
++            runtimePermissionLauncher.launch(permissions)
++        }
++    }
++
+     private fun navigateToAll(navController: NavController) {
+         if (packageRepository.isLoaded) {
+             navController.navigate(R.id.PackageListFragment)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
-index 6251a88..847951c 100644
+index 6251a88..1195eaf 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 @@ -1,6 +1,7 @@
@@ -751,25 +828,18 @@ index 6251a88..847951c 100644
  import androidx.core.view.MenuHost
  import androidx.core.view.MenuProvider
  import androidx.core.view.isVisible
-@@ -21,11 +23,17 @@ import androidx.lifecycle.lifecycleScope
+@@ -21,8 +23,10 @@ import androidx.lifecycle.lifecycleScope
  import androidx.lifecycle.repeatOnLifecycle
  import dagger.hilt.android.AndroidEntryPoint
  import de.szalkowski.activitylauncher.R
 +import de.szalkowski.activitylauncher.data.launcher.ActivityLaunchMethodTester
  import de.szalkowski.activitylauncher.databinding.FragmentActivityDetailsBinding
  import de.szalkowski.activitylauncher.domain.external.ReviewRequester
-+import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
-+import de.szalkowski.activitylauncher.entrypoint.ActivityLaunchService
 +import de.szalkowski.activitylauncher.entrypoint.AuditActivity
  import de.szalkowski.activitylauncher.presentation.common.IconPickerDialogFragment
  import de.szalkowski.activitylauncher.presentation.common.PluginChooserDialogFragment
-+import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.launch
-+import kotlinx.coroutines.withContext
- import javax.inject.Inject
- 
- @AndroidEntryPoint
-@@ -35,6 +43,9 @@ class ActivityDetailsFragment : Fragment() {
+@@ -35,6 +39,9 @@ class ActivityDetailsFragment : Fragment() {
      @Inject
      internal lateinit var reviewRequester: ReviewRequester
  
@@ -779,7 +849,7 @@ index 6251a88..847951c 100644
      private var _binding: FragmentActivityDetailsBinding? = null
      private val binding get() = _binding!!
  
-@@ -85,6 +96,10 @@ class ActivityDetailsFragment : Fragment() {
+@@ -85,6 +92,10 @@ class ActivityDetailsFragment : Fragment() {
  
                      val shareItem = menu.findItem(R.id.action_share)
                      shareItem.isEnabled = viewModel.canShare.value
@@ -790,7 +860,7 @@ index 6251a88..847951c 100644
                  }
  
                  override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
-@@ -97,6 +112,33 @@ class ActivityDetailsFragment : Fragment() {
+@@ -97,6 +108,21 @@ class ActivityDetailsFragment : Fragment() {
                              viewModel.shareActivity()
                              true
                          }
@@ -809,47 +879,38 @@ index 6251a88..847951c 100644
 +                            confirmActivityStateChange(false)
 +                            true
 +                        }
-+                        R.id.action_launch_jvm -> {
-+                            viewModel.launchWithBackend(ActivityLaunchBackend.JVM)
-+                            true
-+                        }
-+                        R.id.action_launch_native -> {
-+                            viewModel.launchWithBackend(ActivityLaunchBackend.JNI_NATIVE)
-+                            true
-+                        }
-+                        R.id.action_launch_root -> {
-+                            viewModel.launchWithBackend(ActivityLaunchBackend.ROOT_SU)
-+                            true
-+                        }
                          else -> false
                      }
                  }
-@@ -123,6 +165,11 @@ class ActivityDetailsFragment : Fragment() {
-                         }
+@@ -124,14 +150,14 @@ class ActivityDetailsFragment : Fragment() {
                      }
                  }
-+                launch {
+                 launch {
+-                    viewModel.editedIcon.collect { icon ->
+-                        val drawable = icon?.loadDrawable(requireContext()) ?: requireContext().packageManager.defaultActivityIcon
+-                        binding.ibIconPicker.setImageDrawable(drawable)
 +                    viewModel.isActivityEnabled.collect {
 +                        activity?.invalidateOptionsMenu()
-+                    }
-+                }
-                 launch {
-                     viewModel.editedIcon.collect { icon ->
-                         val drawable = icon?.loadDrawable(requireContext()) ?: requireContext().packageManager.defaultActivityIcon
-@@ -145,6 +192,12 @@ class ActivityDetailsFragment : Fragment() {
-                         binding.btLaunchChooser.isEnabled = isEnabled
                      }
                  }
-+                launch {
-+                    viewModel.canLaunchShizuku.collect { isEnabled ->
-+                        binding.btLaunchShizuku.isEnabled = isEnabled
-+                        binding.btLaunchRoot.isEnabled = isEnabled
-+                    }
-+                }
                  launch {
-                     viewModel.canCreateShortcut.collect { isEnabled ->
-                         binding.btCreateShortcut.isEnabled = isEnabled
-@@ -168,6 +221,14 @@ class ActivityDetailsFragment : Fragment() {
+-                    viewModel.showLaunchChooser.collect { isVisible ->
+-                        binding.btLaunchChooser.isVisible = isVisible
++                    viewModel.editedIcon.collect { icon ->
++                        val drawable = icon?.loadDrawable(requireContext()) ?: requireContext().packageManager.defaultActivityIcon
++                        binding.ibIconPicker.setImageDrawable(drawable)
+                     }
+                 }
+                 launch {
+@@ -142,7 +168,6 @@ class ActivityDetailsFragment : Fragment() {
+                 launch {
+                     viewModel.canLaunch.collect { isEnabled ->
+                         binding.btLaunch.isEnabled = isEnabled
+-                        binding.btLaunchChooser.isEnabled = isEnabled
+                     }
+                 }
+                 launch {
+@@ -168,6 +193,14 @@ class ActivityDetailsFragment : Fragment() {
                          Toast.makeText(requireContext(), resId, Toast.LENGTH_SHORT).show()
                      }
                  }
@@ -864,54 +925,61 @@ index 6251a88..847951c 100644
              }
          }
  
-@@ -205,6 +266,46 @@ class ActivityDetailsFragment : Fragment() {
-             viewModel.launchActivity()
+@@ -202,16 +235,43 @@ class ActivityDetailsFragment : Fragment() {
          }
  
-+        binding.btLaunchShizuku.setOnClickListener {
-+            viewModel.launchWithShizuku()
-+        }
-+
-+        binding.btLaunchRoot.setOnClickListener {
-+            viewModel.launchWithBackend(ActivityLaunchBackend.ROOT_SU)
-+        }
-+
-+        binding.btTestMethods.setOnClickListener {
-+            binding.btTestMethods.isEnabled = false
+         binding.btLaunch.setOnClickListener {
+-            viewModel.launchActivity()
+-        }
+-
+-        binding.btLaunchChooser.setOnClickListener {
+-            val dialog = PluginChooserDialogFragment.newInstance(
+-                PluginChooserDialogFragment.PluginAction.LAUNCH,
+-                viewModel.launchPlugins.value,
+-                viewModel.shortcutPlugins.value,
+-            )
+-            dialog.show(childFragmentManager, "plugin chooser")
++            binding.btLaunch.isEnabled = false
++            binding.btLaunch.setText(R.string.context_action_launch_auto_busy)
 +            viewLifecycleOwner.lifecycleScope.launch {
-+                val attempts = withContext(Dispatchers.IO) {
++                val attemptsResult = runCatching {
 +                    launchMethodTester.test(viewModel.getEditedActivityIntent())
 +                }
-+                val success = attempts.lastOrNull { it.success }
-+                val message = if (success != null) {
-+                    getString(R.string.launch_methods_test_success, success.backend.name, attempts.size)
-+                } else {
-+                    getString(
-+                        R.string.launch_methods_test_failed,
-+                        attempts.joinToString { it.backend.name },
-+                    )
-+                }
-+                Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
-+                binding.btTestMethods.isEnabled = true
-+            }
-+        }
-+
-+        binding.btLaunchService.setOnClickListener {
-+            val component = viewModel.getEditedActivityIntent().component
-+            if (component != null) {
-+                requireContext().startService(
-+                    Intent(requireContext(), ActivityLaunchService::class.java)
-+                        .putExtra(ActivityLaunchService.EXTRA_PACKAGE, component.packageName)
-+                        .putExtra(ActivityLaunchService.EXTRA_CLASS, component.className)
-+                        .putExtra(ActivityLaunchService.EXTRA_BACKEND, ActivityLaunchBackend.DEFAULT.name),
++                val message = attemptsResult.fold(
++                    onSuccess = { attempts ->
++                        val success = attempts.lastOrNull { it.success }
++                        if (success != null) {
++                            getString(
++                                R.string.launch_methods_test_success,
++                                success.backend.displayName,
++                                attempts.size,
++                            )
++                        } else {
++                            getString(
++                                R.string.launch_methods_test_failed,
++                                attempts.joinToString { it.backend.displayName },
++                            )
++                        }
++                    },
++                    onFailure = { error ->
++                        getString(
++                            R.string.launch_methods_test_failed,
++                            error.message ?: error::class.java.simpleName,
++                        )
++                    },
 +                )
++                if (isAdded) {
++                    Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
++                }
++                _binding?.btLaunch?.apply {
++                    setText(R.string.context_action_launch_auto)
++                    isEnabled = viewModel.canLaunch.value
++                }
 +            }
-+        }
-+
-         binding.btLaunchChooser.setOnClickListener {
-             val dialog = PluginChooserDialogFragment.newInstance(
-                 PluginChooserDialogFragment.PluginAction.LAUNCH,
-@@ -235,4 +336,16 @@ class ActivityDetailsFragment : Fragment() {
+         }
+ 
+         binding.btShareShortcut.setOnClickListener {
+@@ -235,4 +295,16 @@ class ActivityDetailsFragment : Fragment() {
              binding.btFavorite.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_favorite_border, 0, 0, 0)
          }
      }
@@ -1093,6 +1161,38 @@ index 7b6daa8..a44f73a 100644
      fun shareActivity() {
          val info = getEditedActivityInfo()
          shareActivityUseCase(info.componentName)
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/common/DisclaimerDialogFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/common/DisclaimerDialogFragment.kt
+index 381774a..0414e26 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/common/DisclaimerDialogFragment.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/common/DisclaimerDialogFragment.kt
+@@ -3,6 +3,7 @@ package de.szalkowski.activitylauncher.presentation.common
+ import android.app.Dialog
+ import android.os.Bundle
+ import androidx.appcompat.app.AlertDialog
++import androidx.core.os.bundleOf
+ import androidx.fragment.app.DialogFragment
+ import dagger.hilt.android.AndroidEntryPoint
+ import de.szalkowski.activitylauncher.R
+@@ -19,10 +20,19 @@ class DisclaimerDialogFragment : DialogFragment() {
+         builder.setTitle(R.string.title_dialog_disclaimer).setMessage(R.string.dialog_disclaimer)
+             .setPositiveButton(android.R.string.ok) { _, _ ->
+                 settingsRepository.disclaimerAccepted = true
++                parentFragmentManager.setFragmentResult(
++                    REQUEST_KEY,
++                    bundleOf(RESULT_ACCEPTED to true),
++                )
+             }.setNegativeButton(android.R.string.cancel) { _, _ ->
+                 settingsRepository.disclaimerAccepted = false
+                 requireActivity().finish()
+             }
+         return builder.create()
+     }
++
++    companion object {
++        const val REQUEST_KEY = "disclaimer_result"
++        const val RESULT_ACCEPTED = "accepted"
++    }
+ }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt
 index 36e7d3c..fa899ad 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/settings/SettingsFragment.kt
@@ -1199,74 +1299,63 @@ index 36e7d3c..fa899ad 100644
          val languageValues = resources.getStringArray(R.array.locales)
              .map { locale -> settingsRepository.getCountryName(locale) }
 diff --git a/app/src/main/res/layout/fragment_activity_details.xml b/app/src/main/res/layout/fragment_activity_details.xml
-index ba56747..5a624ba 100644
+index ba56747..994cd5d 100644
 --- a/app/src/main/res/layout/fragment_activity_details.xml
 +++ b/app/src/main/res/layout/fragment_activity_details.xml
-@@ -114,6 +114,50 @@
-                 app:icon="@drawable/ic_more_vert" />
-         </LinearLayout>
+@@ -86,33 +86,16 @@
+             app:layout_constraintEnd_toEndOf="parent"
+             app:layout_constraintTop_toTopOf="@+id/tilIcon" />
  
+-        <LinearLayout
+-            android:id="@+id/llLaunch"
 +        <com.google.android.material.button.MaterialButton
-+            android:id="@+id/btLaunchShizuku"
-+            android:layout_width="match_parent"
-+            android:layout_height="wrap_content"
-+            android:layout_marginHorizontal="8dp"
-+            android:layout_marginTop="8dp"
++            android:id="@+id/btLaunch"
+             android:layout_width="match_parent"
+             android:layout_height="wrap_content"
+             android:layout_marginHorizontal="8dp"
+             android:layout_marginTop="32dp"
+-            android:orientation="horizontal"
+-            app:layout_constraintTop_toBottomOf="@+id/tilIcon">
+-
+-            <com.google.android.material.button.MaterialButton
+-                android:id="@+id/btLaunch"
+-                android:layout_width="0dp"
+-                android:layout_height="wrap_content"
+-                android:layout_weight="1"
+-                app:icon="@drawable/ic_rocket_launch"
+-                app:iconTint="?attr/colorOnPrimary"
+-                android:text="@string/context_action_launch" />
+-
+-            <com.google.android.material.button.MaterialButton
+-                android:id="@+id/btLaunchChooser"
+-                style="?attr/materialIconButtonStyle"
+-                android:layout_width="48dp"
+-                android:layout_height="wrap_content"
+-                android:layout_marginStart="4dp"
+-                android:layout_marginLeft="4dp"
+-                app:icon="@drawable/ic_more_vert" />
+-        </LinearLayout>
 +            app:icon="@drawable/ic_rocket_launch"
 +            app:iconTint="?attr/colorOnPrimary"
-+            android:text="@string/context_action_launch_shizuku"
-+            app:layout_constraintTop_toBottomOf="@+id/llLaunch" />
-+
-+        <com.google.android.material.button.MaterialButton
-+            android:id="@+id/btLaunchRoot"
-+            android:layout_width="match_parent"
-+            android:layout_height="wrap_content"
-+            android:layout_marginHorizontal="8dp"
-+            android:layout_marginTop="8dp"
-+            app:icon="@drawable/ic_rocket_launch"
-+            app:iconTint="?attr/colorOnPrimary"
-+            android:text="@string/context_action_launch_root"
-+            app:layout_constraintTop_toBottomOf="@+id/btLaunchShizuku" />
-+
-+        <com.google.android.material.button.MaterialButton
-+            android:id="@+id/btTestMethods"
-+            android:layout_width="match_parent"
-+            android:layout_height="wrap_content"
-+            android:layout_marginHorizontal="8dp"
-+            android:layout_marginTop="8dp"
-+            app:icon="@drawable/ic_rocket_launch"
-+            app:iconTint="?attr/colorOnPrimary"
-+            android:text="@string/context_action_test_methods"
-+            app:layout_constraintTop_toBottomOf="@+id/btLaunchRoot" />
-+
-+        <com.google.android.material.button.MaterialButton
-+            android:id="@+id/btLaunchService"
-+            android:layout_width="match_parent"
-+            android:layout_height="wrap_content"
-+            android:layout_marginHorizontal="8dp"
-+            android:layout_marginTop="8dp"
-+            app:icon="@drawable/ic_rocket_launch"
-+            app:iconTint="?attr/colorOnPrimary"
-+            android:text="@string/context_action_launch_service"
-+            app:layout_constraintTop_toBottomOf="@+id/btTestMethods" />
-+
++            android:text="@string/context_action_launch_auto"
++            app:layout_constraintTop_toBottomOf="@+id/tilIcon" />
+ 
          <LinearLayout
              android:id="@+id/llCreateShortcut"
-             android:layout_width="match_parent"
-@@ -121,7 +165,7 @@
+@@ -121,7 +104,7 @@
              android:layout_marginHorizontal="8dp"
              android:layout_marginTop="8dp"
              android:orientation="horizontal"
 -            app:layout_constraintTop_toBottomOf="@+id/llLaunch">
-+            app:layout_constraintTop_toBottomOf="@+id/btLaunchService">
++            app:layout_constraintTop_toBottomOf="@+id/btLaunch">
  
              <com.google.android.material.button.MaterialButton
                  android:id="@+id/btCreateShortcut"
 diff --git a/app/src/main/res/menu/menu_activity_details.xml b/app/src/main/res/menu/menu_activity_details.xml
-index 508ab02..2879033 100644
+index 508ab02..d7ea2a7 100644
 --- a/app/src/main/res/menu/menu_activity_details.xml
 +++ b/app/src/main/res/menu/menu_activity_details.xml
-@@ -11,4 +11,28 @@
+@@ -11,4 +11,16 @@
          android:title="@string/context_action_share"
          android:icon="@drawable/ic_share"
          app:showAsAction="ifRoom" />
@@ -1282,27 +1371,17 @@ index 508ab02..2879033 100644
 +        android:id="@+id/action_disable_activity"
 +        android:title="@string/action_disable_activity"
 +        app:showAsAction="never" />
-+    <item
-+        android:id="@+id/action_launch_jvm"
-+        android:title="@string/context_action_launch_jvm"
-+        app:showAsAction="never" />
-+    <item
-+        android:id="@+id/action_launch_native"
-+        android:title="@string/context_action_launch_native"
-+        app:showAsAction="never" />
-+    <item
-+        android:id="@+id/action_launch_root"
-+        android:title="@string/context_action_launch_root"
-+        app:showAsAction="never" />
  </menu>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 4893048..ff36891 100644
+index 4893048..3debbf7 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -11,6 +11,25 @@
+@@ -11,6 +11,27 @@
      <string name="context_action_favorite_add" comment="Context menu action to add an activity to the favorites list">Add to favorites</string>
      <string name="context_action_favorite_remove" comment="Context menu action to remove an activity from the favorites list">Remove from favorites</string>
      <string name="context_action_launch" comment="Context menu action to launch an activity normally">Launch activity</string>
++    <string name="context_action_launch_auto">Launch (automatic method)</string>
++    <string name="context_action_launch_auto_busy">Trying available launch methods…</string>
 +    <string name="context_action_launch_shizuku">Launch with Shizuku+</string>
 +    <string name="context_action_launch_jvm">Launch via JVM executor</string>
 +    <string name="context_action_launch_native">Launch via JNI/native executor</string>
@@ -1325,17 +1404,17 @@ index 4893048..ff36891 100644
      <string name="context_action_share" comment="App bar action to share the current activity or app info">Share</string>
      <string name="context_action_share_shortcut" comment="Context menu action to share a created shortcut as a link">Share shortcut</string>
      <string name="context_action_shortcut" comment="Context menu action to create a home screen shortcut for an activity">Create shortcut</string>
-@@ -23,6 +42,9 @@
+@@ -23,6 +44,9 @@
      <string name="error_invalid_activity_link" comment="Error message for invalid deep link or activity reference">Invalid activity link provided</string>
      <string name="error_invalid_icon_format" comment="Error message when the selected icon file format is not supported">Error: invalid icon format</string>
      <string name="error_invalid_icon_resource" comment="Error message for invalid or non-existent icon resource">Error: invalid icon resource</string>
 +    <string name="error_shizuku_permission">Shizuku permission was not granted.</string>
 +    <string name="error_shizuku_not_running">Shizuku is not running.</string>
-+    <string name="error_shizuku_unsupported">Shizuku+ requires Android 7.0 or newer.</string>
++    <string name="error_shizuku_unsupported">Shizuku requires Android 6.0 and API v11 or newer.</string>
      <string name="error_verbose_pin_shortcut" comment="Error message when the device launcher does not support pinning shortcuts">Current launcher does not support "PinShortcut". Unable to create shortcut.</string>
      <string name="exception_invalid_component_name" comment="Error message for dangerous or invalid component names. %s is the problematic component">Invalid or potentially harmful component name: %s</string>
      <string name="filter_hint" comment="Hint text in the filter search input field">package/action</string>
-@@ -43,6 +65,21 @@
+@@ -43,6 +67,21 @@
      <string name="settings_summary_hide_private" comment="Description explaining the hide private activities setting">Hide private (unexported and disabled) activities</string>
      <string name="settings_summary_pro_version" comment="Description for the Pro version setting">Want to support the app and remove ads? Get Activity Launcher Pro on Google Play — it helps fund development and is fully open-source.</string>
      <string name="settings_summary_support_discord">Join our Discord server for support, feature requests, and community discussions.</string>
@@ -1357,7 +1436,7 @@ index 4893048..ff36891 100644
      <string name="settings_support_discord">Support and Feature Requests</string>
      <string name="settings_theme" comment="Settings option for app theme selection">Theme</string>
      <string name="short_description" comment="Short description shown in app store listings (Play Store, F-Droid)">Launches hidden activities and creates shortcuts for installed apps</string>
-@@ -56,4 +93,12 @@
+@@ -56,4 +95,12 @@
      <string name="title_dialog_support" comment="Dialog title for the support/donate dialog">Thanks for using Activity Launcher</string>
      <string name="title_fragment_activity_list" comment="Screen title showing activities within a selected package">Activities</string>
      <string name="title_fragment_package_list" comment="Screen title for the list of installed packages/apps">Installed packages</string>
@@ -2491,16 +2570,17 @@ index 0000000..8754a3b
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt
 new file mode 100644
-index 0000000..714e5a4
+index 0000000..94c03bb
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,86 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Context
 +import android.content.Intent
 +import dagger.hilt.android.qualifiers.ApplicationContext
 +import de.szalkowski.activitylauncher.data.database.LaunchMethodDao
++import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchExecutor
 +import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
 +import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
 +import kotlinx.coroutines.Dispatchers
@@ -2517,30 +2597,47 @@ index 0000000..714e5a4
 +class ActivityLaunchMethodTester @Inject constructor(
 +    @ApplicationContext private val context: Context,
 +    private val launchMethodDao: LaunchMethodDao,
++    private val shizukuExecutor: ShizukuActivityLaunchExecutor,
++    private val jvmExecutor: JvmActivityLaunchExecutor,
++    private val nativeExecutor: NativeActivityLaunchExecutor,
++    private val rootExecutor: RootActivityLaunchExecutor,
 +) {
 +    suspend fun test(intent: Intent): List<ActivityLaunchMethodAttempt> = withContext(Dispatchers.IO) {
 +        val component = requireNotNull(intent.component) { "An explicit component is required" }
 +        val packageName = component.packageName
 +        val className = component.className
 +        val history = launchMethodDao.getHistory(packageName, className).associateBy { it.backend }
-+        val candidates = listOf(
++        val defaultOrder = listOf(
 +            ActivityLaunchBackend.DEFAULT,
 +            ActivityLaunchBackend.SHIZUKU_PLUS,
 +            ActivityLaunchBackend.JVM,
 +            ActivityLaunchBackend.JNI_NATIVE,
-+        ).sortedWith(
-+            compareByDescending<ActivityLaunchBackend> { history[it.name]?.successes ?: 0 }
-+                .thenByDescending { history[it.name]?.lastSuccessAt ?: 0L },
++            ActivityLaunchBackend.ROOT_SU,
 +        )
++        val executors = mapOf<ActivityLaunchBackend, ActivityLaunchExecutor>(
++            ActivityLaunchBackend.SHIZUKU_PLUS to shizukuExecutor,
++            ActivityLaunchBackend.JVM to jvmExecutor,
++            ActivityLaunchBackend.JNI_NATIVE to nativeExecutor,
++            ActivityLaunchBackend.ROOT_SU to rootExecutor,
++        )
++        val available = defaultOrder.filter { backend ->
++            when (backend) {
++                ActivityLaunchBackend.DEFAULT -> true
++                ActivityLaunchBackend.SHIZUKU_PLUS -> shizukuExecutor.state() == ShizukuState.GRANTED
++                else -> executors[backend]?.isAvailable() == true
++            }
++        }
++        val candidates = available.filterNot { it == ActivityLaunchBackend.ROOT_SU }.sortedWith(
++            compareByDescending<ActivityLaunchBackend> { history[it.name]?.successes ?: 0 }
++                .thenByDescending { history[it.name]?.lastSuccessAt ?: 0L }
++                .thenBy { defaultOrder.indexOf(it) },
++        ) + available.filter { it == ActivityLaunchBackend.ROOT_SU }
 +
 +        val attempts = mutableListOf<ActivityLaunchMethodAttempt>()
 +        for (backend in candidates) {
 +            val result = when (backend) {
 +                ActivityLaunchBackend.DEFAULT -> launchDefault(intent)
-+                ActivityLaunchBackend.SHIZUKU_PLUS -> ShizukuActivityLaunchExecutor().launch(intent)
-+                ActivityLaunchBackend.JVM -> JvmActivityLaunchExecutor().launch(intent)
-+                ActivityLaunchBackend.JNI_NATIVE -> NativeActivityLaunchExecutor().launch(intent)
-+                ActivityLaunchBackend.ROOT_SU -> continue
++                else -> requireNotNull(executors[backend]).launch(intent)
 +            }
 +            val attempt = ActivityLaunchMethodAttempt(backend, result.started, result.message)
 +            attempts += attempt
@@ -2752,7 +2849,7 @@ index 0000000..47a9576
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..b0a712c
+index 0000000..91b2c8d
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootActivityLaunchExecutor.kt
 @@ -0,0 +1,61 @@
@@ -2774,11 +2871,11 @@ index 0000000..b0a712c
 +class RootActivityLaunchExecutor @Inject constructor() : ActivityLaunchExecutor {
 +    override val backend: ActivityLaunchBackend = ActivityLaunchBackend.ROOT_SU
 +
-+    override fun isAvailable(): Boolean = suCandidates().any { it == "su" || File(it).canExecute() }
++    override fun isAvailable(): Boolean = suCandidates().any { File(it).canExecute() }
 +
 +    override fun launch(intent: Intent): ActivityLaunchResult {
 +        val command = ActivityCommandBuilder.buildStartCommand(intent)
-+        val su = suCandidates().firstOrNull { it == "su" || File(it).canExecute() }
++        val su = suCandidates().firstOrNull { File(it).canExecute() }
 +            ?: return ActivityLaunchResult(false, "Nie znaleziono su/root managera")
 +
 +        return runCatching {
@@ -2814,12 +2911,12 @@ index 0000000..b0a712c
 +        "/system/xbin/su",
 +        "/sbin/su",
 +        "/su/bin/su",
-+        "su",
++        "/debug_ramdisk/su",
 +    )
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..e530678
+index 0000000..63912dc
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 @@ -0,0 +1,62 @@
@@ -2860,7 +2957,7 @@ index 0000000..e530678
 +
 +    override fun launch(intent: Intent): ActivityLaunchResult {
 +        when (val shizukuState = state()) {
-+            ShizukuState.UNSUPPORTED -> return ActivityLaunchResult(false, "Shizuku wymaga Androida 7.0 lub nowszego")
++            ShizukuState.UNSUPPORTED -> return ActivityLaunchResult(false, "Shizuku wymaga Androida 6.0 i API v11+")
 +            ShizukuState.STOPPED -> return ActivityLaunchResult(false, "Usługa Shizuku nie działa")
 +            ShizukuState.DENIED -> return ActivityLaunchResult(false, "Brak zgody Shizuku")
 +            ShizukuState.GRANTED -> Unit
@@ -2887,10 +2984,10 @@ index 0000000..e530678
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt
 new file mode 100644
-index 0000000..9e7d274
+index 0000000..9be1915
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuCommandExecutor.kt
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,110 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.pm.PackageManager
@@ -2913,12 +3010,15 @@ index 0000000..9e7d274
 +
 +/** Shared, non-shell command bridge for operations that explicitly require Shizuku. */
 +class ShizukuCommandExecutor @Inject constructor() {
-+    fun isAvailable(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
++    fun isAvailable(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
 +
 +    fun state(): ShizukuState {
 +        if (!isAvailable()) return ShizukuState.UNSUPPORTED
 +        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
 +            return ShizukuState.STOPPED
++        }
++        if (runCatching { Shizuku.isPreV11() }.getOrDefault(true)) {
++            return ShizukuState.UNSUPPORTED
 +        }
 +        return if (hasPermission()) ShizukuState.GRANTED else ShizukuState.DENIED
 +    }
@@ -2939,6 +3039,10 @@ index 0000000..9e7d274
 +        }
 +        if (hasPermission()) {
 +            callback(true)
++            return
++        }
++        if (runCatching { Shizuku.shouldShowRequestPermissionRationale() }.getOrDefault(true)) {
++            callback(false)
 +            return
 +        }
 +
@@ -3056,6 +3160,152 @@ index 0000000..93230ce
 +
 +    companion object {
 +        private const val PER_USER_RANGE = 100_000
++    }
++}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/permissions/StartupPermissionCoordinator.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/permissions/StartupPermissionCoordinator.kt
+new file mode 100644
+index 0000000..5b86ffa
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/permissions/StartupPermissionCoordinator.kt
+@@ -0,0 +1,140 @@
++package de.szalkowski.activitylauncher.data.permissions
++
++import android.content.Context
++import android.content.pm.PackageManager
++import android.content.pm.PermissionInfo
++import android.os.Build
++import android.util.Log
++import androidx.core.content.ContextCompat
++import dagger.hilt.android.qualifiers.ApplicationContext
++import de.szalkowski.activitylauncher.data.launcher.ShizukuCommandExecutor
++import de.szalkowski.activitylauncher.data.launcher.ShizukuState
++import rikka.shizuku.Shizuku
++import java.util.concurrent.atomic.AtomicBoolean
++import javax.inject.Inject
++import javax.inject.Singleton
++
++internal fun isRuntimeDangerousPermission(protectionLevel: Int): Boolean =
++    protectionLevel and PermissionInfo.PROTECTION_MASK_BASE == PermissionInfo.PROTECTION_DANGEROUS
++
++enum class ShizukuInstallation {
++    STANDARD,
++    COMPATIBLE_MANAGER,
++    BINDER_ONLY,
++    NONE,
++}
++
++/** Detects both the standard manager and compatible Shizuku-derived binder providers. */
++@Singleton
++class ShizukuManagerDetector @Inject constructor(
++    @ApplicationContext private val context: Context,
++) {
++    fun detect(): ShizukuInstallation = when {
++        isInstalled(STANDARD_PACKAGE) -> ShizukuInstallation.STANDARD
++        isInstalled(COMPATIBLE_PACKAGE) -> ShizukuInstallation.COMPATIBLE_MANAGER
++        runCatching { Shizuku.pingBinder() }.getOrDefault(false) -> ShizukuInstallation.BINDER_ONLY
++        else -> ShizukuInstallation.NONE
++    }
++
++    @Suppress("DEPRECATION")
++    private fun isInstalled(packageName: String): Boolean = runCatching {
++        context.packageManager.getPackageInfo(packageName, 0)
++    }.isSuccess
++
++    private companion object {
++        const val STANDARD_PACKAGE = "moe.shizuku.privileged.api"
++        const val COMPATIBLE_PACKAGE = "moe.shizuku.manager"
++    }
++}
++
++/**
++ * Coordinates startup permission prompts without requesting hidden, signature, or system-only
++ * permissions. Shizuku authorization is always delegated to the official Shizuku API.
++ */
++@Singleton
++class StartupPermissionCoordinator @Inject constructor(
++    @ApplicationContext private val context: Context,
++    private val shizukuCommandExecutor: ShizukuCommandExecutor,
++    private val shizukuManagerDetector: ShizukuManagerDetector,
++) {
++    private val started = AtomicBoolean(false)
++    private val runtimeRequestPending = AtomicBoolean(false)
++    private val shizukuRequestStarted = AtomicBoolean(false)
++    private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
++        requestShizukuIfReady()
++    }
++
++    fun start(requestRuntimePermissions: (Array<String>) -> Unit) {
++        if (!started.compareAndSet(false, true)) return
++
++        val missingPermissions = missingRuntimePermissions()
++        if (missingPermissions.isNotEmpty()) {
++            runtimeRequestPending.set(true)
++            requestRuntimePermissions(missingPermissions)
++        }
++
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
++            runCatching { Shizuku.addBinderReceivedListenerSticky(binderReceivedListener) }
++                .onFailure { Log.w(TAG, "Could not register Shizuku binder listener", it) }
++            requestShizukuIfReady()
++        }
++    }
++
++    fun onRuntimePermissionRequestFinished() {
++        runtimeRequestPending.set(false)
++        requestShizukuIfReady()
++    }
++
++    fun stop() {
++        if (!started.compareAndSet(true, false)) return
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
++            runCatching { Shizuku.removeBinderReceivedListener(binderReceivedListener) }
++        }
++    }
++
++    @Suppress("DEPRECATION")
++    internal fun missingRuntimePermissions(): Array<String> {
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return emptyArray()
++
++        val packageInfo = runCatching {
++            context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
++        }.getOrNull() ?: return emptyArray()
++
++        return packageInfo.requestedPermissions.orEmpty()
++            .asSequence()
++            .filterNot { it in SHIZUKU_PERMISSIONS }
++            .filter { permission ->
++                ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
++            }
++            .filter { permission ->
++                val info = runCatching {
++                    context.packageManager.getPermissionInfo(permission, 0)
++                }.getOrNull()
++                info != null && isRuntimeDangerousPermission(info.protectionLevel)
++            }
++            .distinct()
++            .sorted()
++            .toList()
++            .toTypedArray()
++    }
++
++    private fun requestShizukuIfReady() {
++        if (!started.get() || runtimeRequestPending.get()) return
++        if (shizukuCommandExecutor.state() != ShizukuState.DENIED) return
++        if (!shizukuRequestStarted.compareAndSet(false, true)) return
++
++        val installation = shizukuManagerDetector.detect()
++        Log.i(TAG, "Requesting Shizuku authorization from $installation")
++        shizukuCommandExecutor.requestPermission { granted ->
++            Log.i(TAG, "Shizuku authorization result: ${if (granted) "granted" else "not granted"}")
++        }
++    }
++
++    private companion object {
++        const val TAG = "StartupPermissions"
++        val SHIZUKU_PERMISSIONS = setOf(
++            "moe.shizuku.manager.permission.API_V23",
++            "moe.shizuku.privileged.api.PERMISSION_GRANTED",
++        )
 +    }
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/plugin/SignedPluginLoader.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/plugin/SignedPluginLoader.kt
@@ -3284,7 +3534,7 @@ index 0000000..5ea04b6
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt
 new file mode 100644
-index 0000000..c4d3285
+index 0000000..a5741a5
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/domain/model/ActivityLaunchBackend.kt
 @@ -0,0 +1,16 @@
@@ -3297,12 +3547,12 @@ index 0000000..c4d3285
 + * backends for diagnostics and compatibility testing. SHIZUKU_PLUS requires a user-approved
 + * Shizuku grant. ROOT_SU requires an already-installed root manager and explicit user approval.
 + */
-+enum class ActivityLaunchBackend {
-+    DEFAULT,
-+    SHIZUKU_PLUS,
-+    ROOT_SU,
-+    JVM,
-+    JNI_NATIVE,
++enum class ActivityLaunchBackend(val displayName: String) {
++    DEFAULT("Android framework / ART"),
++    SHIZUKU_PLUS("Shizuku / compatible Shizuku+"),
++    ROOT_SU("Root manager"),
++    JVM("Java process on ART"),
++    JNI_NATIVE("JNI native worker"),
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/domain/plugin/ActivityLauncherPlugin.kt b/app/src/main/java/de/szalkowski/activitylauncher/domain/plugin/ActivityLauncherPlugin.kt
 new file mode 100644
@@ -3741,13 +3991,13 @@ index 0000000..45339d5
 +</LinearLayout>
 diff --git a/app/src/main/res/values-v23/bools.xml b/app/src/main/res/values-v23/bools.xml
 new file mode 100644
-index 0000000..bae41bc
+index 0000000..63e4e9e
 --- /dev/null
 +++ b/app/src/main/res/values-v23/bools.xml
 @@ -0,0 +1,4 @@
 +<?xml version="1.0" encoding="utf-8"?>
 +<resources>
-+    <bool name="shizuku_provider_enabled">false</bool>
++    <bool name="shizuku_provider_enabled">true</bool>
 +</resources>
 diff --git a/app/src/main/res/values-v24/bools.xml b/app/src/main/res/values-v24/bools.xml
 new file mode 100644
@@ -3998,5 +4248,30 @@ index 0000000..e2197f9
 +        return runCatching { Intent.parseUri(candidate, Intent.URI_INTENT_SCHEME) }
 +            .getOrNull()
 +            ?.takeIf { it.component != null }
++    }
++}
+diff --git a/app/src/test/java/de/szalkowski/activitylauncher/data/permissions/StartupPermissionCoordinatorTest.kt b/app/src/test/java/de/szalkowski/activitylauncher/data/permissions/StartupPermissionCoordinatorTest.kt
+new file mode 100644
+index 0000000..6e0ffeb
+--- /dev/null
++++ b/app/src/test/java/de/szalkowski/activitylauncher/data/permissions/StartupPermissionCoordinatorTest.kt
+@@ -0,0 +1,19 @@
++package de.szalkowski.activitylauncher.data.permissions
++
++import android.content.pm.PermissionInfo
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++class StartupPermissionCoordinatorTest {
++    @Test
++    fun `dangerous permissions are eligible for a runtime request`() {
++        assertTrue(isRuntimeDangerousPermission(PermissionInfo.PROTECTION_DANGEROUS))
++    }
++
++    @Test
++    fun `normal and signature permissions are never requested at runtime`() {
++        assertFalse(isRuntimeDangerousPermission(PermissionInfo.PROTECTION_NORMAL))
++        assertFalse(isRuntimeDangerousPermission(PermissionInfo.PROTECTION_SIGNATURE))
 +    }
 +}

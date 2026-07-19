@@ -35,14 +35,18 @@ index 68a54b7..c13a919 100644
      val roomVersion = "2.6.1"
      implementation("androidx.room:room-runtime:$roomVersion")
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index b1e2f6a..d709bf7 100644
+index b1e2f6a..c7a932e 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
-@@ -2,10 +2,13 @@
+@@ -2,10 +2,17 @@
  <manifest xmlns:android="http://schemas.android.com/apk/res/android"
      xmlns:tools="http://schemas.android.com/tools">
  
 +    <uses-sdk tools:overrideLibrary="rikka.shizuku.provider,rikka.shizuku.api,rikka.shizuku.shared,rikka.shizuku.aidl" />
++
++    <!-- Standard Shizuku 13.x authorization permission. The custom permission below is kept
++         for compatibility with the Shizuku+ manager used by older Activity Launcher plugins. -->
++    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 +
      <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
      <uses-permission
@@ -52,7 +56,19 @@ index b1e2f6a..d709bf7 100644
  
      <permission
          android:name="de.szalkowski.activitylauncher.permission.CREATE_SHORTCUT"
-@@ -115,6 +118,20 @@
+@@ -17,6 +24,11 @@
+     <uses-permission android:name="de.szalkowski.activitylauncher.permission.CREATE_SHORTCUT" />
+     <uses-permission android:name="de.szalkowski.activitylauncher.permission.LAUNCH_ACTIVITY" />
+ 
++    <queries>
++        <package android:name="moe.shizuku.manager" />
++        <package android:name="moe.shizuku.privileged.api" />
++    </queries>
++
+     <uses-feature
+         android:name="android.software.leanback"
+         android:required="false" />
+@@ -115,6 +127,20 @@
              android:label="@string/activity_settings"
              android:theme="@style/Theme.ActivityLauncher.NoActionBar" />
  
@@ -73,6 +89,15 @@ index b1e2f6a..d709bf7 100644
          <activity
              android:name=".entrypoint.QSTileNavHostActivity"
              android:exported="false"
+@@ -132,7 +158,7 @@
+ 
+         <receiver
+             android:name=".entrypoint.PackageChangeReceiver"
+-            android:exported="true">
++            android:exported="false">
+             <intent-filter>
+                 <action android:name="android.intent.action.PACKAGE_ADDED" />
+                 <action android:name="android.intent.action.PACKAGE_REPLACED" />
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
 index b7592b7..082d05e 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt

@@ -23,10 +23,16 @@ index 68a54b7..3cea6f8 100644
      val roomVersion = "2.6.1"
      implementation("androidx.room:room-runtime:$roomVersion")
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index b1e2f6a..67f0f4a 100644
+index b1e2f6a..7a9651f 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
-@@ -6,6 +6,7 @@
+@@ -2,10 +2,13 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+     xmlns:tools="http://schemas.android.com/tools">
+ 
++    <uses-sdk tools:overrideLibrary="rikka.shizuku.provider" />
++
+     <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
      <uses-permission
          android:name="android.permission.QUERY_ALL_PACKAGES"
          tools:ignore="QueryAllPackagesPermission" />
@@ -34,7 +40,7 @@ index b1e2f6a..67f0f4a 100644
  
      <permission
          android:name="de.szalkowski.activitylauncher.permission.CREATE_SHORTCUT"
-@@ -115,6 +116,20 @@
+@@ -115,6 +118,20 @@
              android:label="@string/activity_settings"
              android:theme="@style/Theme.ActivityLauncher.NoActionBar" />
  

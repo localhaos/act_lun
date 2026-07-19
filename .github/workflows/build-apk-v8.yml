@@ -1,0 +1,96 @@
+name: Build ActivityLauncher v8
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: Upstream ActivityLauncher branch or tag
+        required: true
+        default: master
+        type: string
+      version_name:
+        description: APK versionName
+        required: true
+        default: 8.0.0
+        type: string
+      version_code:
+        description: APK versionCode
+        required: true
+        default: "8"
+        type: string
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: activitylauncher-v8-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION_NAME: ${{ inputs.version_name || '8.0.0' }}
+      VERSION_CODE: ${{ inputs.version_code || '8' }}
+
+    steps:
+      - name: Checkout builder
+        uses: actions/checkout@v4
+
+      - name: Download upstream ActivityLauncher
+        uses: actions/checkout@v4
+        with:
+          repository: ActivityLauncher/ActivityLauncher
+          ref: ${{ inputs.upstream_ref || 'master' }}
+          path: upstream
+          fetch-depth: 1
+
+      - name: Apply ActivityLauncher patch
+        working-directory: upstream
+        shell: bash
+        run: |
+          git apply --check ../patches/activitylauncher.patch
+          git apply --whitespace=nowarn ../patches/activitylauncher.patch
+          git diff --check
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify and build APK
+        working-directory: upstream
+        shell: bash
+        run: |
+          ./gradlew --no-daemon spotlessCheck testOssNoadsDebugUnitTest assembleOssNoadsDebug \
+            -PactivityLauncherVersionName="$VERSION_NAME" \
+            -PactivityLauncherVersionCode="$VERSION_CODE"
+
+      - name: Locate APK
+        id: apk
+        working-directory: upstream
+        shell: bash
+        run: |
+          apk_path="$(find app/build/outputs/apk -type f -name '*.apk' | sort | head -n 1)"
+          test -n "$apk_path"
+          echo "path=$apk_path" >> "$GITHUB_OUTPUT"
+          echo "APK: $apk_path"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: ActivityLauncher-v8-${{ github.run_number }}
+          path: upstream/${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+          retention-days: 1

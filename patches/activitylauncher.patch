@@ -98,6 +98,165 @@ index b1e2f6a..c7a932e 100644
              <intent-filter>
                  <action android:name="android.intent.action.PACKAGE_ADDED" />
                  <action android:name="android.intent.action.PACKAGE_REPLACED" />
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/app/di/DatabaseModule.kt b/app/src/main/java/de/szalkowski/activitylauncher/app/di/DatabaseModule.kt
+index 8029aa9..9e25c17 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/app/di/DatabaseModule.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/app/di/DatabaseModule.kt
+@@ -1,7 +1,9 @@
+ package de.szalkowski.activitylauncher.app.di
+ 
+ import android.content.Context
++import androidx.room.migration.Migration
+ import androidx.room.Room
++import androidx.sqlite.db.SupportSQLiteDatabase
+ import dagger.Module
+ import dagger.Provides
+ import dagger.hilt.InstallIn
+@@ -9,6 +11,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
+ import dagger.hilt.components.SingletonComponent
+ import de.szalkowski.activitylauncher.data.database.AppDatabase
+ import de.szalkowski.activitylauncher.data.database.PackageDao
++import de.szalkowski.activitylauncher.data.database.LaunchMethodDao
+ import javax.inject.Singleton
+ 
+ @Module
+@@ -21,11 +24,44 @@ object DatabaseModule {
+             context,
+             AppDatabase::class.java,
+             "activity_launcher.db",
+-        ).fallbackToDestructiveMigration().build()
++        ).addMigrations(MIGRATION_2_3).fallbackToDestructiveMigration().build()
+     }
+ 
+     @Provides
+     fun providePackageDao(database: AppDatabase): PackageDao {
+         return database.packageDao()
+     }
++
++    @Provides
++    fun provideLaunchMethodDao(database: AppDatabase): LaunchMethodDao {
++        return database.launchMethodDao()
++    }
++
++    private val MIGRATION_2_3 = object : Migration(2, 3) {
++        override fun migrate(database: SupportSQLiteDatabase) {
++            database.execSQL(
++                """
++                CREATE TABLE IF NOT EXISTS launch_method_history (
++                    packageName TEXT NOT NULL,
++                    className TEXT NOT NULL,
++                    backend TEXT NOT NULL,
++                    attempts INTEGER NOT NULL,
++                    successes INTEGER NOT NULL,
++                    lastAttemptAt INTEGER NOT NULL,
++                    lastSuccessAt INTEGER,
++                    lastMessage TEXT,
++                    PRIMARY KEY(packageName, className, backend)
++                )
++                """.trimIndent(),
++            )
++            database.execSQL(
++                "CREATE INDEX IF NOT EXISTS index_launch_method_history_packageName " +
++                    "ON launch_method_history(packageName)",
++            )
++            database.execSQL(
++                "CREATE INDEX IF NOT EXISTS index_launch_method_history_backend " +
++                    "ON launch_method_history(backend)",
++            )
++        }
++    }
+ }
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/database/AppDatabase.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/database/AppDatabase.kt
+index 79b60a9..5db928c 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/data/database/AppDatabase.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/database/AppDatabase.kt
+@@ -48,6 +48,48 @@ abstract class PackageDao {
+     abstract suspend fun deleteAllPackages(): Int
+ }
+ 
++@Dao
++abstract class LaunchMethodDao {
++    @Query(
++        "SELECT * FROM launch_method_history " +
++            "WHERE packageName = :packageName AND className = :className " +
++            "ORDER BY successes DESC, lastSuccessAt DESC, lastAttemptAt DESC",
++    )
++    abstract suspend fun getHistory(packageName: String, className: String): List<LaunchMethodHistoryEntity>
++
++    @Query(
++        "SELECT * FROM launch_method_history " +
++            "WHERE packageName = :packageName AND className = :className AND backend = :backend LIMIT 1",
++    )
++    abstract suspend fun get(packageName: String, className: String, backend: String): LaunchMethodHistoryEntity?
++
++    @Insert(onConflict = OnConflictStrategy.REPLACE)
++    abstract suspend fun upsert(entry: LaunchMethodHistoryEntity)
++
++    suspend fun record(
++        packageName: String,
++        className: String,
++        backend: String,
++        success: Boolean,
++        message: String?,
++    ) {
++        val now = System.currentTimeMillis()
++        val previous = get(packageName, className, backend)
++        upsert(
++            LaunchMethodHistoryEntity(
++                packageName = packageName,
++                className = className,
++                backend = backend,
++                attempts = (previous?.attempts ?: 0) + 1,
++                successes = (previous?.successes ?: 0) + if (success) 1 else 0,
++                lastAttemptAt = now,
++                lastSuccessAt = if (success) now else previous?.lastSuccessAt,
++                lastMessage = message,
++            ),
++        )
++    }
++}
++
+ data class PackageWithActivities(
+     @Embedded val pkg: AppPackageEntity,
+     @Relation(
+@@ -57,7 +99,12 @@ data class PackageWithActivities(
+     val activities: List<ActivityEntity>,
+ )
+ 
+-@Database(entities = [AppPackageEntity::class, ActivityEntity::class], version = 2, exportSchema = false)
++@Database(
++    entities = [AppPackageEntity::class, ActivityEntity::class, LaunchMethodHistoryEntity::class],
++    version = 3,
++    exportSchema = false,
++)
+ abstract class AppDatabase : RoomDatabase() {
+     abstract fun packageDao(): PackageDao
++    abstract fun launchMethodDao(): LaunchMethodDao
+ }
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/database/Entities.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/database/Entities.kt
+index c0d94c6..4fc7f09 100644
+--- a/app/src/main/java/de/szalkowski/activitylauncher/data/database/Entities.kt
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/database/Entities.kt
+@@ -37,3 +37,19 @@ data class ActivityEntity(
+     val isPrivate: Boolean,
+     val iconResourceName: String?,
+ )
++
++@Entity(
++    tableName = "launch_method_history",
++    primaryKeys = ["packageName", "className", "backend"],
++    indices = [Index("packageName"), Index("backend")],
++)
++data class LaunchMethodHistoryEntity(
++    val packageName: String,
++    val className: String,
++    val backend: String,
++    val attempts: Int,
++    val successes: Int,
++    val lastAttemptAt: Long,
++    val lastSuccessAt: Long?,
++    val lastMessage: String?,
++)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
 index b7592b7..082d05e 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLauncherImpl.kt
@@ -188,7 +347,7 @@ index 8f097b8..44096b2 100644
          } else {
              activityLauncher.launchActivity(request)
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
-index 6251a88..8d47d93 100644
+index 6251a88..3df036f 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsFragment.kt
 @@ -1,6 +1,7 @@
@@ -207,16 +366,34 @@ index 6251a88..8d47d93 100644
  import androidx.core.view.MenuHost
  import androidx.core.view.MenuProvider
  import androidx.core.view.isVisible
-@@ -23,6 +25,8 @@ import dagger.hilt.android.AndroidEntryPoint
+@@ -21,11 +23,16 @@ import androidx.lifecycle.lifecycleScope
+ import androidx.lifecycle.repeatOnLifecycle
+ import dagger.hilt.android.AndroidEntryPoint
  import de.szalkowski.activitylauncher.R
++import de.szalkowski.activitylauncher.data.launcher.ActivityLaunchMethodTester
  import de.szalkowski.activitylauncher.databinding.FragmentActivityDetailsBinding
  import de.szalkowski.activitylauncher.domain.external.ReviewRequester
 +import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
 +import de.szalkowski.activitylauncher.entrypoint.AuditActivity
  import de.szalkowski.activitylauncher.presentation.common.IconPickerDialogFragment
  import de.szalkowski.activitylauncher.presentation.common.PluginChooserDialogFragment
++import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.launch
-@@ -97,6 +101,33 @@ class ActivityDetailsFragment : Fragment() {
++import kotlinx.coroutines.withContext
+ import javax.inject.Inject
+ 
+ @AndroidEntryPoint
+@@ -35,6 +42,9 @@ class ActivityDetailsFragment : Fragment() {
+     @Inject
+     internal lateinit var reviewRequester: ReviewRequester
+ 
++    @Inject
++    internal lateinit var launchMethodTester: ActivityLaunchMethodTester
++
+     private var _binding: FragmentActivityDetailsBinding? = null
+     private val binding get() = _binding!!
+ 
+@@ -97,6 +107,33 @@ class ActivityDetailsFragment : Fragment() {
                              viewModel.shareActivity()
                              true
                          }
@@ -250,7 +427,7 @@ index 6251a88..8d47d93 100644
                          else -> false
                      }
                  }
-@@ -145,6 +176,12 @@ class ActivityDetailsFragment : Fragment() {
+@@ -145,6 +182,12 @@ class ActivityDetailsFragment : Fragment() {
                          binding.btLaunchChooser.isEnabled = isEnabled
                      }
                  }
@@ -263,7 +440,7 @@ index 6251a88..8d47d93 100644
                  launch {
                      viewModel.canCreateShortcut.collect { isEnabled ->
                          binding.btCreateShortcut.isEnabled = isEnabled
-@@ -168,6 +205,14 @@ class ActivityDetailsFragment : Fragment() {
+@@ -168,6 +211,14 @@ class ActivityDetailsFragment : Fragment() {
                          Toast.makeText(requireContext(), resId, Toast.LENGTH_SHORT).show()
                      }
                  }
@@ -278,7 +455,7 @@ index 6251a88..8d47d93 100644
              }
          }
  
-@@ -205,6 +250,14 @@ class ActivityDetailsFragment : Fragment() {
+@@ -205,6 +256,34 @@ class ActivityDetailsFragment : Fragment() {
              viewModel.launchActivity()
          }
  
@@ -290,10 +467,30 @@ index 6251a88..8d47d93 100644
 +            viewModel.launchWithBackend(ActivityLaunchBackend.ROOT_SU)
 +        }
 +
++        binding.btTestMethods.setOnClickListener {
++            binding.btTestMethods.isEnabled = false
++            viewLifecycleOwner.lifecycleScope.launch {
++                val attempts = withContext(Dispatchers.IO) {
++                    launchMethodTester.test(viewModel.getEditedActivityIntent())
++                }
++                val success = attempts.lastOrNull { it.success }
++                val message = if (success != null) {
++                    getString(R.string.launch_methods_test_success, success.backend.name, attempts.size)
++                } else {
++                    getString(
++                        R.string.launch_methods_test_failed,
++                        attempts.joinToString { it.backend.name },
++                    )
++                }
++                Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
++                binding.btTestMethods.isEnabled = true
++            }
++        }
++
          binding.btLaunchChooser.setOnClickListener {
              val dialog = PluginChooserDialogFragment.newInstance(
                  PluginChooserDialogFragment.PluginAction.LAUNCH,
-@@ -235,4 +288,16 @@ class ActivityDetailsFragment : Fragment() {
+@@ -235,4 +314,16 @@ class ActivityDetailsFragment : Fragment() {
              binding.btFavorite.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_favorite_border, 0, 0, 0)
          }
      }
@@ -311,7 +508,7 @@ index 6251a88..8d47d93 100644
 +    }
  }
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
-index 7b6daa8..64cf5d3 100644
+index 7b6daa8..8395a6b 100644
 --- a/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/presentation/activities/ActivityDetailsViewModel.kt
 @@ -10,8 +10,13 @@ import androidx.lifecycle.viewModelScope
@@ -374,7 +571,7 @@ index 7b6daa8..64cf5d3 100644
      init {
          setupIconErrorDebounce()
  
-@@ -216,6 +232,75 @@ class ActivityDetailsViewModel @Inject constructor(
+@@ -216,6 +232,77 @@ class ActivityDetailsViewModel @Inject constructor(
          launchActivityUseCase(request)
      }
  
@@ -417,6 +614,8 @@ index 7b6daa8..64cf5d3 100644
 +        )
 +    }
 +
++    fun getEditedActivityIntent() = getActivityIntent(getEditedActivityInfo().componentName, Bundle())
++
 +    fun setActivityEnabled(enabled: Boolean) {
 +        val target = getEditedActivityInfo().componentName
 +        when (shizukuExecutor.state()) {
@@ -451,10 +650,10 @@ index 7b6daa8..64cf5d3 100644
          val info = getEditedActivityInfo()
          shareActivityUseCase(info.componentName)
 diff --git a/app/src/main/res/layout/fragment_activity_details.xml b/app/src/main/res/layout/fragment_activity_details.xml
-index ba56747..81cd6f8 100644
+index ba56747..9f55607 100644
 --- a/app/src/main/res/layout/fragment_activity_details.xml
 +++ b/app/src/main/res/layout/fragment_activity_details.xml
-@@ -114,6 +114,28 @@
+@@ -114,6 +114,39 @@
                  app:icon="@drawable/ic_more_vert" />
          </LinearLayout>
  
@@ -480,15 +679,26 @@ index ba56747..81cd6f8 100644
 +            android:text="@string/context_action_launch_root"
 +            app:layout_constraintTop_toBottomOf="@+id/btLaunchShizuku" />
 +
++        <com.google.android.material.button.MaterialButton
++            android:id="@+id/btTestMethods"
++            android:layout_width="match_parent"
++            android:layout_height="wrap_content"
++            android:layout_marginHorizontal="8dp"
++            android:layout_marginTop="8dp"
++            app:icon="@drawable/ic_rocket_launch"
++            app:iconTint="?attr/colorOnPrimary"
++            android:text="@string/context_action_test_methods"
++            app:layout_constraintTop_toBottomOf="@+id/btLaunchRoot" />
++
          <LinearLayout
              android:id="@+id/llCreateShortcut"
              android:layout_width="match_parent"
-@@ -121,7 +143,7 @@
+@@ -121,7 +154,7 @@
              android:layout_marginHorizontal="8dp"
              android:layout_marginTop="8dp"
              android:orientation="horizontal"
 -            app:layout_constraintTop_toBottomOf="@+id/llLaunch">
-+            app:layout_constraintTop_toBottomOf="@+id/btLaunchRoot">
++            app:layout_constraintTop_toBottomOf="@+id/btTestMethods">
  
              <com.google.android.material.button.MaterialButton
                  android:id="@+id/btCreateShortcut"
@@ -526,10 +736,10 @@ index 508ab02..2879033 100644
 +        app:showAsAction="never" />
  </menu>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 4893048..062f6fc 100644
+index 4893048..8792da5 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -11,6 +11,21 @@
+@@ -11,6 +11,24 @@
      <string name="context_action_favorite_add" comment="Context menu action to add an activity to the favorites list">Add to favorites</string>
      <string name="context_action_favorite_remove" comment="Context menu action to remove an activity from the favorites list">Remove from favorites</string>
      <string name="context_action_launch" comment="Context menu action to launch an activity normally">Launch activity</string>
@@ -537,6 +747,9 @@ index 4893048..062f6fc 100644
 +    <string name="context_action_launch_jvm">Launch via JVM executor</string>
 +    <string name="context_action_launch_native">Launch via JNI/native executor</string>
 +    <string name="context_action_launch_root">Launch via root (su)</string>
++    <string name="context_action_test_methods">Test launch methods</string>
++    <string name="launch_methods_test_success">Method %1$s succeeded after %2$d attempt(s).</string>
++    <string name="launch_methods_test_failed">No method succeeded. Tried: %1$s</string>
 +    <string name="context_action_audit">Audit package</string>
 +    <string name="action_enable_activity">Enable activity</string>
 +    <string name="action_disable_activity">Disable activity</string>
@@ -551,7 +764,7 @@ index 4893048..062f6fc 100644
      <string name="context_action_share" comment="App bar action to share the current activity or app info">Share</string>
      <string name="context_action_share_shortcut" comment="Context menu action to share a created shortcut as a link">Share shortcut</string>
      <string name="context_action_shortcut" comment="Context menu action to create a home screen shortcut for an activity">Create shortcut</string>
-@@ -23,6 +38,9 @@
+@@ -23,6 +41,9 @@
      <string name="error_invalid_activity_link" comment="Error message for invalid deep link or activity reference">Invalid activity link provided</string>
      <string name="error_invalid_icon_format" comment="Error message when the selected icon file format is not supported">Error: invalid icon format</string>
      <string name="error_invalid_icon_resource" comment="Error message for invalid or non-existent icon resource">Error: invalid icon resource</string>
@@ -561,7 +774,7 @@ index 4893048..062f6fc 100644
      <string name="error_verbose_pin_shortcut" comment="Error message when the device launcher does not support pinning shortcuts">Current launcher does not support "PinShortcut". Unable to create shortcut.</string>
      <string name="exception_invalid_component_name" comment="Error message for dangerous or invalid component names. %s is the problematic component">Invalid or potentially harmful component name: %s</string>
      <string name="filter_hint" comment="Hint text in the filter search input field">package/action</string>
-@@ -56,4 +74,12 @@
+@@ -56,4 +77,12 @@
      <string name="title_dialog_support" comment="Dialog title for the support/donate dialog">Thanks for using Activity Launcher</string>
      <string name="title_fragment_activity_list" comment="Screen title showing activities within a selected package">Activities</string>
      <string name="title_fragment_package_list" comment="Screen title for the list of installed packages/apps">Installed packages</string>
@@ -713,14 +926,15 @@ index 0000000..92794e0
 +target_compile_options(activitylauncher_worker PRIVATE -Wall -Wextra)
 diff --git a/app/src/main/cpp/activitylauncher_worker.cpp b/app/src/main/cpp/activitylauncher_worker.cpp
 new file mode 100644
-index 0000000..6b328e2
+index 0000000..f3b5b98
 --- /dev/null
 +++ b/app/src/main/cpp/activitylauncher_worker.cpp
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,100 @@
 +#include <jni.h>
 +
 +#include <cerrno>
 +#include <string>
++#include <sys/wait.h>
 +#include <unistd.h>
 +#include <vector>
 +
@@ -801,6 +1015,20 @@ index 0000000..6b328e2
 +#else
 +    return 0;
 +#endif
++}
++
++extern "C" JNIEXPORT jint JNICALL
++Java_de_szalkowski_activitylauncher_data_launcher_NativeWorker_nativeWaitFor(
++    JNIEnv*,
++    jclass,
++    jint pid
++) {
++    if (pid <= 0) return -EINVAL;
++    int status = 0;
++    if (waitpid(static_cast<pid_t>(pid), &status, 0) < 0) return -errno;
++    if (WIFEXITED(status)) return WEXITSTATUS(status);
++    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
++    return -ECHILD;
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt b/app/src/main/java/de/szalkowski/activitylauncher/core/util/ActivityCommandBuilder.kt
 new file mode 100644
@@ -1203,12 +1431,85 @@ index 0000000..5c0a5e0
 +        const val MAX_FINDINGS = 256
 +    }
 +}
+diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt
+new file mode 100644
+index 0000000..94cf088
+--- /dev/null
++++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ActivityLaunchMethodTester.kt
+@@ -0,0 +1,67 @@
++package de.szalkowski.activitylauncher.data.launcher
++
++import android.content.Context
++import android.content.Intent
++import dagger.hilt.android.qualifiers.ApplicationContext
++import de.szalkowski.activitylauncher.data.database.LaunchMethodDao
++import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
++import javax.inject.Inject
++
++data class ActivityLaunchMethodAttempt(
++    val backend: ActivityLaunchBackend,
++    val success: Boolean,
++    val message: String?,
++)
++
++/** Tests the first safe available backend and stores the result for this exact component. */
++class ActivityLaunchMethodTester @Inject constructor(
++    @ApplicationContext private val context: Context,
++    private val launchMethodDao: LaunchMethodDao,
++) {
++    suspend fun test(intent: Intent): List<ActivityLaunchMethodAttempt> = withContext(Dispatchers.IO) {
++        val component = requireNotNull(intent.component) { "An explicit component is required" }
++        val packageName = component.packageName
++        val className = component.className
++        val history = launchMethodDao.getHistory(packageName, className).associateBy { it.backend }
++        val candidates = listOf(
++            ActivityLaunchBackend.DEFAULT,
++            ActivityLaunchBackend.SHIZUKU_PLUS,
++            ActivityLaunchBackend.JVM,
++            ActivityLaunchBackend.JNI_NATIVE,
++        ).sortedWith(
++            compareByDescending<ActivityLaunchBackend> { history[it.name]?.successes ?: 0 }
++                .thenByDescending { history[it.name]?.lastSuccessAt ?: 0L },
++        )
++
++        val attempts = mutableListOf<ActivityLaunchMethodAttempt>()
++        for (backend in candidates) {
++            val result = when (backend) {
++                ActivityLaunchBackend.DEFAULT -> launchDefault(intent)
++                ActivityLaunchBackend.SHIZUKU_PLUS -> ShizukuActivityLaunchExecutor().launch(intent)
++                ActivityLaunchBackend.JVM -> JvmActivityLaunchExecutor().launch(intent)
++                ActivityLaunchBackend.JNI_NATIVE -> NativeActivityLaunchExecutor().launch(intent)
++                ActivityLaunchBackend.ROOT_SU -> continue
++            }
++            val attempt = ActivityLaunchMethodAttempt(backend, result.started, result.message)
++            attempts += attempt
++            launchMethodDao.record(
++                packageName = packageName,
++                className = className,
++                backend = backend.name,
++                success = result.started,
++                message = result.message,
++            )
++            if (result.started) break
++        }
++        attempts
++    }
++
++    private fun launchDefault(intent: Intent): ActivityLaunchResult = runCatching {
++        context.startActivity(Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
++        ActivityLaunchResult(true)
++    }.getOrElse { error ->
++        ActivityLaunchResult(false, error.message ?: error::class.java.simpleName)
++    }
++}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/JvmActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/JvmActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..d501095
+index 0000000..64c89e6
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/JvmActivityLaunchExecutor.kt
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,55 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Intent
@@ -1217,6 +1518,7 @@ index 0000000..d501095
 +import de.szalkowski.activitylauncher.domain.launcher.ActivityLaunchResult
 +import de.szalkowski.activitylauncher.domain.model.ActivityLaunchBackend
 +import javax.inject.Inject
++import kotlin.concurrent.thread
 +
 +/**
 + * Starts the platform activity-manager command through the Java runtime.
@@ -1233,7 +1535,26 @@ index 0000000..d501095
 +        }.fold(
 +            onSuccess = { process ->
 +                process.outputStream.close()
-+                ActivityLaunchResult(started = true)
++                val stdout = StringBuilder()
++                val stderr = StringBuilder()
++                val stdoutReader = thread(start = true, isDaemon = true) {
++                    process.inputStream.bufferedReader().use { stdout.append(it.readText()) }
++                }
++                val stderrReader = thread(start = true, isDaemon = true) {
++                    process.errorStream.bufferedReader().use { stderr.append(it.readText()) }
++                }
++                val exitCode = process.waitFor()
++                stdoutReader.join()
++                stderrReader.join()
++                if (exitCode == 0) {
++                    ActivityLaunchResult(started = true)
++                } else {
++                    ActivityLaunchResult(
++                        started = false,
++                        message = (stderr.toString().ifBlank { stdout.toString() }).trim()
++                            .ifBlank { "am zakończyło pracę z kodem $exitCode" },
++                    )
++                }
 +            },
 +            onFailure = { error ->
 +                ActivityLaunchResult(
@@ -1246,10 +1567,10 @@ index 0000000..d501095
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..14dc2ec
+index 0000000..f22fc7c
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeActivityLaunchExecutor.kt
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,42 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Intent
@@ -1275,7 +1596,12 @@ index 0000000..14dc2ec
 +        return runCatching {
 +            val pid = NativeWorker.spawn(ActivityCommandBuilder.buildStartCommand(intent))
 +            if (pid != null) {
-+                ActivityLaunchResult(started = true)
++                val exitCode = NativeWorker.waitFor(pid)
++                if (exitCode == 0) {
++                    ActivityLaunchResult(started = true)
++                } else {
++                    ActivityLaunchResult(false, "am zakończyło pracę z kodem $exitCode")
++                }
 +            } else {
 +                ActivityLaunchResult(false, "Native worker could not spawn activity manager")
 +            }
@@ -1289,10 +1615,10 @@ index 0000000..14dc2ec
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeWorker.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeWorker.kt
 new file mode 100644
-index 0000000..b9442bf
+index 0000000..47a9576
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/NativeWorker.kt
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,31 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +/** Small JNI worker that only spawns the fixed Android activity-manager binary. */
@@ -1310,6 +1636,9 @@ index 0000000..b9442bf
 +    @JvmStatic
 +    external fun nativeAbiLevel(): Int
 +
++    @JvmStatic
++    external fun nativeWaitFor(pid: Int): Int
++
 +    fun isAvailable(): Boolean = loaded
 +
 +    fun spawn(command: List<String>): Int? {
@@ -1318,6 +1647,8 @@ index 0000000..b9442bf
 +            .getOrNull()
 +            ?.takeIf { it > 0 }
 +    }
++
++    fun waitFor(pid: Int): Int = runCatching { nativeWaitFor(pid) }.getOrDefault(-1)
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/RootActivityLaunchExecutor.kt
 new file mode 100644

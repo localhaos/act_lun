@@ -562,10 +562,10 @@ index 560ee48..afa8d1b 100644
          val mockIntent = mock<android.content.Intent>()
 diff --git a/ADVANCED_EXECUTORS.md b/ADVANCED_EXECUTORS.md
 new file mode 100644
-index 0000000..ff92eb0
+index 0000000..442cf25
 --- /dev/null
 +++ b/ADVANCED_EXECUTORS.md
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,64 @@
 +# Advanced executors and APK audit
 +
 +This fork adds four explicit activity-launch backends:
@@ -583,6 +583,15 @@ index 0000000..ff92eb0
 +diagnostic testing; private or non-exported activity access requires Shizuku/Sui/root and the
 +corresponding user authorization. The JNI worker is built by the app's CMake/NDK configuration
 +and is packaged per Android ABI.
++
++## Review of `localhaos/testjne`
++
++That repository currently contains a single `stealth_fix.cpp` file and no Gradle, CMake, or
++Android.mk build configuration. The source is not a general executor: it implements inline
++function hooks, changes memory permissions, intercepts `ptrace`/`prctl`/`openat`/`readlink` and
++`sigaction`, loads a Frida gadget, and wipes ELF headers. Those behaviors are intentionally not
++copied into this app. The worker above is a clean CMake/NDK implementation limited to spawning
++the platform `am start` command with a fixed argument vector.
 +
 +## APK / developer audit
 +

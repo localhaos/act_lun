@@ -1095,10 +1095,10 @@ index 0000000..f5eb7ab
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
 new file mode 100644
-index 0000000..1dfd46a
+index 0000000..b85165f
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuActivityLaunchExecutor.kt
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,58 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.Intent
@@ -1121,8 +1121,10 @@ index 0000000..1dfd46a
 + * invokes `sh -c`, so component names and extras cannot become shell syntax.
 + */
 +class ShizukuActivityLaunchExecutor @Inject constructor(
-+    private val commandExecutor: ShizukuCommandExecutor = ShizukuCommandExecutor(),
++    private val commandExecutor: ShizukuCommandExecutor,
 +) : ActivityLaunchExecutor {
++    constructor() : this(ShizukuCommandExecutor())
++
 +    override val backend: ActivityLaunchBackend = ActivityLaunchBackend.SHIZUKU_PLUS
 +
 +    override fun isAvailable(): Boolean = commandExecutor.isAvailable()
@@ -1266,10 +1268,10 @@ index 0000000..9e7d274
 +}
 diff --git a/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuPackageStateExecutor.kt b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuPackageStateExecutor.kt
 new file mode 100644
-index 0000000..e46dc3e
+index 0000000..93230ce
 --- /dev/null
 +++ b/app/src/main/java/de/szalkowski/activitylauncher/data/launcher/ShizukuPackageStateExecutor.kt
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,58 @@
 +package de.szalkowski.activitylauncher.data.launcher
 +
 +import android.content.ComponentName
@@ -1284,8 +1286,10 @@ index 0000000..e46dc3e
 +
 +/** Changes per-user package or component state through the already-authorized Shizuku shell. */
 +class ShizukuPackageStateExecutor @Inject constructor(
-+    private val commandExecutor: ShizukuCommandExecutor = ShizukuCommandExecutor(),
++    private val commandExecutor: ShizukuCommandExecutor,
 +) {
++    constructor() : this(ShizukuCommandExecutor())
++
 +    fun setApplicationEnabled(
 +        packageName: String,
 +        enabled: Boolean,

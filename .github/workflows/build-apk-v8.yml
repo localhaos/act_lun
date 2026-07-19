@@ -25,7 +25,7 @@ on:
     - cron: "17 3 * * 1"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: activitylauncher-v8-${{ github.ref }}
@@ -86,11 +86,18 @@ jobs:
           echo "path=$apk_path" >> "$GITHUB_OUTPUT"
           echo "APK: $apk_path"
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: ActivityLauncher-v8-${{ github.run_number }}
-          path: upstream/${{ steps.apk.outputs.path }}
-          if-no-files-found: error
-          retention-days: 1
+      - name: Publish GitHub Release
+        working-directory: upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          safe_version="${VERSION_NAME//[^0-9A-Za-z._-]/-}"
+          tag="v${safe_version}-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          release_file="ActivityLauncher-v8-${safe_version}-${GITHUB_RUN_NUMBER}.apk"
+          cp "${{ steps.apk.outputs.path }}" "$release_file"
+          gh release create "$tag" "$release_file" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "ActivityLauncher v8 ${VERSION_NAME} (${GITHUB_RUN_NUMBER})" \
+            --notes "Built from ActivityLauncher/ActivityLauncher ref ${{ inputs.upstream_ref || 'master' }} with the act_lun patch. APK is an unsigned debug build."

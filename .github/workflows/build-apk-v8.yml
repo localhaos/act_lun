@@ -38,6 +38,12 @@ jobs:
     env:
       VERSION_NAME: ${{ inputs.version_name || '8.0.0' }}
       VERSION_CODE: ${{ inputs.version_code || '8' }}
+      APPID: ${{ vars.ACTIVITY_LAUNCHER_APP_ID || 'de.szalkowski.activitylauncher' }}
+      KNOX_KPE_LICENSE_KEY: ${{ secrets.KNOX_KPE_LICENSE_KEY }}
+      KEYSTORE_BASE64: ${{ secrets.ACTIVITY_LAUNCHER_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ACTIVITY_LAUNCHER_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ACTIVITY_LAUNCHER_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ACTIVITY_LAUNCHER_KEY_PASSWORD }}
 
     steps:
       - name: Checkout builder
@@ -59,6 +65,27 @@ jobs:
           git apply --whitespace=nowarn ../patches/activitylauncher.patch
           git diff --check
 
+      - name: Prepare optional release signing
+        shell: bash
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" ]]; then
+            if [[ -z "$KEYSTORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+              echo "::error::Release keystore is configured but its password or alias secret is missing."
+              exit 1
+            fi
+            keystore_path="$RUNNER_TEMP/activitylauncher-release.jks"
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+            echo "KEYSTORE=$keystore_path" >> "$GITHUB_ENV"
+            echo "BUILD_TASK=assembleOssNoadsRelease" >> "$GITHUB_ENV"
+            echo "BUILD_KIND=signed release" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_TASK=assembleOssNoadsDebug" >> "$GITHUB_ENV"
+            echo "BUILD_KIND=debug" >> "$GITHUB_ENV"
+            if [[ -n "$KNOX_KPE_LICENSE_KEY" ]]; then
+              echo "::warning::KPE activation is signature-bound; configure a stable release keystore."
+            fi
+          fi
+
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
@@ -72,7 +99,7 @@ jobs:
         working-directory: upstream
         shell: bash
         run: |
-          ./gradlew --no-daemon spotlessCheck testOssNoadsDebugUnitTest assembleOssNoadsDebug \
+          ./gradlew --no-daemon spotlessCheck testOssNoadsDebugUnitTest "$BUILD_TASK" \
             -PactivityLauncherVersionName="$VERSION_NAME" \
             -PactivityLauncherVersionCode="$VERSION_CODE"
 
@@ -100,4 +127,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "ActivityLauncher v8 ${VERSION_NAME} (${GITHUB_RUN_NUMBER})" \
-            --notes "Built from ActivityLauncher/ActivityLauncher ref ${{ inputs.upstream_ref || 'master' }} with the act_lun patch. APK is an unsigned debug build."
+            --notes "Built from ActivityLauncher/ActivityLauncher ref ${{ inputs.upstream_ref || 'master' }} with the act_lun patch. Build type: $BUILD_KIND. Knox KPE activation requires a valid key bound to this package name and signing certificate."
